@@ -370,9 +370,17 @@ function setFile(info) {
   updateOutputName();
 }
 
+// 서버의 normalize_output_code 와 동일한 규칙
+const OUTPUT_CODE_ALIASES = { ko: "kor", korean: "kor" };
+
+function normalizeOutputCode(value) {
+  const code = (value || "").trim().replace(/^\.+|\.+$/g, "").toLowerCase() || "kor";
+  return OUTPUT_CODE_ALIASES[code] || code;
+}
+
 function updateOutputName() {
   if (!state.file) return;
-  const code = ($("language-code").value.trim() || "ko").replace(/^\.+|\.+$/g, "");
+  const code = normalizeOutputCode($("language-code").value);
   const stem = state.file.name.replace(/\.[^.]+$/, "").replace(/\.[a-z]{2,3}$/i, "");
   $("fi-output").textContent = `${stem}.${code}.srt`;
 }

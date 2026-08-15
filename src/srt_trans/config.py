@@ -37,7 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "thinking": True,
     "thinking_budget": 2048,
     "streaming": True,
-    # 출력 파일명에 붙일 언어 코드 (예: movie.ko.srt)
+    # 번역 대상 언어 코드 (출력 파일명은 movie.kor.srt 처럼 3글자로 정규화됨)
     "language_code": "ko",
     # 마지막으로 사용한 상세 줄거리/등장인물 정보
     "story_context": "",

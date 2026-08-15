@@ -80,11 +80,20 @@ def strip_language_code(stem: str) -> str:
     return result or stem
 
 
+# 출력 파일명에는 3글자 코드를 사용함 (설정값이 ko여도 movie.kor.srt 로 생성)
+_OUTPUT_CODE_ALIASES = {"ko": "kor", "korean": "kor"}
+
+
+def normalize_output_code(language_code: str | None) -> str:
+    """출력 파일명에 쓸 언어 코드를 정규화함."""
+    code = (language_code or "").strip().strip(".").lower() or "kor"
+    return _OUTPUT_CODE_ALIASES.get(code, code)
+
+
 def build_output_name(source_name: str, language_code: str = "ko") -> str:
-    """원본 파일명에서 출력 파일명을 만듦. 예) movie.en.srt -> movie.ko.srt"""
+    """원본 파일명에서 출력 파일명을 만듦. 예) movie.en.srt -> movie.kor.srt"""
     stem = strip_language_code(Path(source_name).stem)
-    code = (language_code or "ko").strip().strip(".") or "ko"
-    return f"{stem}.{code}.srt"
+    return f"{stem}.{normalize_output_code(language_code)}.srt"
 
 
 def dominant_direction(text: str) -> str:
