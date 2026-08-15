@@ -45,6 +45,26 @@ _BASE_INSTRUCTION = (
     "Do NOT alter the 'index' field.\n"
 )
 
+# 서식 태그가 붙은 줄에서 종결 마침표가 남는 사례가 잦아 별도 규칙으로 강조함
+_PERIOD_RULE = (
+    "\n[CRITICAL RULE] Removing the trailing period. Apply this to EVERY entry, with no exception:\n"
+    "1. The translated text must NOT end with a period ('.').\n"
+    "2. This applies even when the text is wrapped in formatting tags such as <i>, <b>, <u>, "
+    "<font ...>, or ASS/SSA overrides like {\\an8}. The period that sits INSIDE the closing tag "
+    "must be removed too. The tags themselves must be kept exactly as they are.\n"
+    "   - \"<i>He is not coming back.</i>\"  ->  \"<i>그는 돌아오지 않아</i>\"   (NOT \"<i>그는 돌아오지 않아.</i>\")\n"
+    "   - \"<i>Call me later.</i>\"          ->  \"<i>나중에 전화해</i>\"\n"
+    "   - \"She left already.\"              ->  \"이미 떠났어\"\n"
+    "   - \"<i>Line one.\\nLine two.</i>\"     ->  \"<i>첫 줄이야.\\n둘째 줄이야</i>\"\n"
+    "3. Lines in italics (a voice over the phone, a radio, narration, song lyrics) are where this "
+    "rule is missed most often. Check every line containing a tag one more time before answering.\n"
+    "4. Do NOT remove '?', '!', '...' or '…'. Only the plain period is removed.\n"
+    "5. If an entry holds several sentences, keep the periods between them and remove only the "
+    "very last one.\n"
+    "   - \"안녕하세요. 반갑습니다.\"  ->  \"안녕하세요. 반갑습니다\"\n"
+    "6. Never touch periods that belong inside an abbreviation or a number (Mr., 3.5, U.S.).\n"
+)
+
 _FORMAT_RULES = (
     "\nWhen translating text, follow these formatting rules:\n"
     "1. Line length: Keep lines to 40-50 characters when possible, breaking at natural phrase "
@@ -54,7 +74,9 @@ _FORMAT_RULES = (
     "3. Spacing: Ensure proper spacing between words and after punctuation marks.\n"
     "4. Sentence breaks: If a sentence continues on the next line, maintain proper spacing between "
     "the end of one line and the beginning of the next.\n"
-    "5. Preserve line breaks, formatting tags and special characters that exist in the source.\n"
+    "5. Preserve line breaks, formatting tags and special characters that exist in the source. "
+    "The only exception is the sentence-ending period, which must always be removed (see the "
+    "critical rule below).\n"
 )
 
 _THINKING_ON = "\nThink deeply and reason as much as possible before returning the response.\n"
@@ -99,8 +121,13 @@ def build_system_instruction(
     thinking: bool = True,
     thinking_supported: bool = True,
 ) -> str:
-    """번역용 시스템 지시문 전체를 생성함."""
-    instruction = _BASE_INSTRUCTION + _FORMAT_RULES
+    """번역용 시스템 지시문 전체를 생성함.
+
+    thinking_supported는 '프롬프트로 사고를 제어하는 모델인지'를 뜻함.
+    OpenAI 추론 모델처럼 파라미터(reasoning_effort)로 제어하는 경우에는 False를 넘겨
+    사고 관련 문구가 들어가지 않도록 함.
+    """
+    instruction = _BASE_INSTRUCTION + _FORMAT_RULES + _PERIOD_RULE
     instruction += _story_context_block(story_context, title=title, is_series=is_series)
 
     if thinking_supported:

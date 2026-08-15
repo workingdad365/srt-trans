@@ -11,6 +11,8 @@ const state = {
   running: false,
   // TMDB에서 가져온 줄거리/출연진 정보. 직접 입력한 줄거리가 없을 때만 사용됨
   tmdb: null,
+  // 현재 선택한 모델이 지원하는 파라미터 정보
+  capabilities: null,
 };
 
 // --- 공통 유틸 ------------------------------------------------------------
@@ -38,9 +40,13 @@ let toastTimer = null;
 function toast(message, kind = "") {
   const element = $("toast");
   element.textContent = message;
+  element.className = "toast hidden";
+  // 같은 종류가 연달아 떠도 등장 애니메이션이 다시 재생되도록 리플로우를 유발함
+  void element.offsetWidth;
   element.className = `toast ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => element.classList.add("hidden"), 4000);
+  // 오류는 놓치기 쉬우므로 더 오래 표시함
+  toastTimer = setTimeout(() => element.classList.add("hidden"), kind === "error" ? 8000 : 4000);
 }
 
 function logLine(level, message, time) {
@@ -100,9 +106,11 @@ function currentProvider() {
   return state.providers.find((item) => item.id === $("provider").value) || state.providers[0];
 }
 
-function applyConfig(config) {
-  if (config.provider) $("provider").value = config.provider;
-
+/**
+ * 현재 선택된 프로바이더에 맞춰 화면을 갱신함.
+ * 주의: 여기서 provider select의 값을 바꾸면 사용자의 선택을 되돌리게 되므로 건드리지 않음.
+ */
+function applyProviderView() {
   const provider = currentProvider();
   if (provider) {
     const link = $("api-key-link");
@@ -112,28 +120,51 @@ function applyConfig(config) {
 
   updateKeyState();
 
-  const model = (config.models || {})[$("provider").value] || "";
-  if (model) {
-    const select = $("model");
-    select.innerHTML = "";
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    select.appendChild(option);
-    select.value = model;
+  // 프로바이더가 바뀌면 이전 프로바이더의 모델이 남지 않도록 항상 초기화함
+  const providerId = $("provider").value;
+  const model = ((state.config && state.config.models) || {})[providerId] || "";
+  const select = $("model");
+  select.innerHTML = "";
+  const option = document.createElement("option");
+  option.value = model;
+  option.textContent = model || "모델 목록을 불러오세요";
+  select.appendChild(option);
+  select.value = model;
+
+  refreshCapabilities();
+}
+
+/** 사용자가 프로바이더를 바꿨을 때 처리 */
+async function onProviderChanged() {
+  const providerId = $("provider").value;
+  $("api-key").value = "";
+  applyProviderView();
+
+  // 선택한 프로바이더를 바로 저장해 다음 실행에도 유지되게 함
+  try {
+    state.config = await postJson("/api/config", { provider: providerId });
+    applyProviderView();
+  } catch (error) {
+    logLine("warning", `프로바이더 저장 실패: ${error.message}`);
   }
+}
+
+function applyConfig(config) {
+  if (config.provider) $("provider").value = config.provider;
+  applyProviderView();
 
   $("batch-size").value = config.batch_size ?? 300;
   $("language-code").value = config.language_code || "ko";
   $("thinking").checked = config.thinking !== false;
   $("streaming").checked = config.streaming !== false;
+  $("strip-period").checked = config.strip_trailing_period !== false;
   $("thinking-budget").value = config.thinking_budget ?? 2048;
   if (config.temperature !== null && config.temperature !== undefined) {
     $("temperature").value = config.temperature;
   }
   if (config.top_p !== null && config.top_p !== undefined) $("top-p").value = config.top_p;
   if (config.top_k !== null && config.top_k !== undefined) $("top-k").value = config.top_k;
-  if (config.story_context) $("story-context").value = config.story_context;
+  // 줄거리/등장인물 정보는 작품마다 다르므로 저장/복원하지 않음
   if (config.extra_instruction) $("extra-instruction").value = config.extra_instruction;
 }
 
@@ -172,10 +203,7 @@ function bindEvents() {
     });
   });
 
-  $("provider").addEventListener("change", () => {
-    applyConfig(state.config || {});
-    $("api-key").value = "";
-  });
+  $("provider").addEventListener("change", onProviderChanged);
 
   $("toggle-api-key").addEventListener("click", () => togglePassword("api-key"));
   $("toggle-tmdb-key").addEventListener("click", () => togglePassword("tmdb-key"));
@@ -219,14 +247,19 @@ async function saveApiKey() {
     toast("API 키를 입력하세요.", "error");
     return;
   }
+  // 어느 프로바이더에 저장되는지 명시해 잘못 저장하는 실수를 막음
+  const providerId = $("provider").value;
+  const label = (currentProvider() || {}).label || providerId;
+
   try {
     state.config = await postJson("/api/config", {
-      provider: $("provider").value,
-      api_keys: { [$("provider").value]: key },
+      provider: providerId,
+      api_keys: { [providerId]: key },
     });
     $("api-key").value = "";
     updateKeyState();
-    toast("API 키를 저장했습니다.", "ok");
+    toast(`${label} API 키를 저장했습니다.`, "ok");
+    logLine("success", `${label}(${providerId}) API 키를 저장했습니다.`);
   } catch (error) {
     toast(error.message, "error");
   }
@@ -259,18 +292,95 @@ async function saveSelectedModel() {
   } catch (error) {
     toast(error.message, "error");
   }
+  await refreshCapabilities();
+}
+
+// --- 모델별 지원 파라미터 -------------------------------------------------
+
+async function refreshCapabilities() {
+  const model = $("model").value;
+  if (!model) {
+    state.capabilities = null;
+    applyCapabilities(null);
+    return;
+  }
+  try {
+    state.capabilities = await postJson("/api/model-info", {
+      provider: $("provider").value,
+      model,
+    });
+  } catch (error) {
+    state.capabilities = null;
+    logLine("warning", `모델 정보 조회 실패: ${error.message}`);
+  }
+  applyCapabilities(state.capabilities);
+}
+
+function setFieldEnabled(wrapperId, inputId, enabled, reason) {
+  const wrapper = $(wrapperId);
+  const input = $(inputId);
+  if (!wrapper || !input) return;
+  input.disabled = !enabled;
+  wrapper.style.opacity = enabled ? "" : "0.45";
+  wrapper.title = enabled ? "" : reason || "이 모델에서는 사용할 수 없습니다";
+}
+
+function applyCapabilities(caps) {
+  // 정보를 못 받았으면 모든 입력란을 열어 둠
+  const unknown = !caps;
+  const reason = "선택한 모델이 지원하지 않는 설정입니다";
+
+  setFieldEnabled("wrap-temperature", "temperature", unknown || caps.temperature, reason);
+  setFieldEnabled("wrap-top-p", "top-p", unknown || caps.top_p, reason);
+  setFieldEnabled("wrap-top-k", "top-k", unknown || caps.top_k, reason);
+
+  const control = unknown ? null : caps.thinking_control;
+  const budgetOn = unknown || control === "budget";
+  const effortOn = !unknown && control === "effort";
+
+  setFieldEnabled("wrap-thinking-budget", "thinking-budget", budgetOn, reason);
+  $("wrap-thinking-budget").classList.toggle("hidden", effortOn);
+
+  $("wrap-reasoning-effort").classList.toggle("hidden", !effortOn);
+  if (effortOn) {
+    const select = $("reasoning-effort");
+    const previous = select.value || (state.config && state.config.reasoning_effort) || "medium";
+    select.innerHTML = "";
+    for (const choice of caps.effort_choices) {
+      const option = document.createElement("option");
+      option.value = choice;
+      option.textContent = choice;
+      select.appendChild(option);
+    }
+    select.value = caps.effort_choices.includes(previous) ? previous : caps.effort_choices.at(-2) || caps.effort_choices[0];
+    select.disabled = false;
+  }
+
+  // Thinking 사용 체크박스는 켜고 끌 수 있는 모델에서만 의미가 있음
+  const thinkingToggle = unknown || control === "budget" || control === "on_off";
+  $("thinking").disabled = !thinkingToggle;
+  $("wrap-thinking").style.opacity = thinkingToggle ? "" : "0.45";
+
+  $("model-notes").textContent = unknown ? "" : (caps.notes || []).join(" ");
 }
 
 async function loadModels() {
   const button = $("load-models");
   const typedKey = $("api-key").value.trim();
+  const providerId = $("provider").value;
+  const label = (currentProvider() || {}).label || providerId;
   button.disabled = true;
   button.textContent = "불러오는 중...";
   try {
     const data = await postJson("/api/models", {
-      provider: $("provider").value,
+      provider: providerId,
       api_key: typedKey || null,
     });
+    if (!data.models.length) {
+      toast(`${label}에서 사용 가능한 모델을 찾지 못했습니다.`, "error");
+      logLine("warning", `${label}: 모델 목록이 비어 있습니다.`);
+      return;
+    }
     const select = $("model");
     const previous = select.value;
     select.innerHTML = "";
@@ -280,12 +390,14 @@ async function loadModels() {
       option.textContent = model;
       select.appendChild(option);
     }
-    const saved = (state.config && (state.config.models || {})[$("provider").value]) || previous;
-    if (saved && data.models.includes(saved)) select.value = saved;
-    toast(`${data.models.length}개 모델을 불러왔습니다.`, "ok");
+    const saved = (state.config && (state.config.models || {})[providerId]) || previous;
+    select.value = saved && data.models.includes(saved) ? saved : data.models[0];
+    toast(`${label} 모델 ${data.models.length}개를 불러왔습니다.`, "ok");
+    logLine("success", `${label}: 모델 ${data.models.length}개 조회 완료`);
     await saveSelectedModel();
   } catch (error) {
-    toast(error.message, "error");
+    toast(`${label} 모델 조회 실패: ${error.message}`, "error");
+    logLine("error", `${label} 모델 조회 실패: ${error.message}`);
   } finally {
     button.disabled = false;
     button.textContent = "모델 목록 불러오기";
@@ -359,14 +471,30 @@ async function loadLocalFile() {
 }
 
 function setFile(info) {
+  // 다른 파일로 바뀌면 이전 작품의 정보가 남지 않도록 초기화함
+  const changed = !state.file || state.file.name !== info.name;
+
   state.file = info;
   $("file-info").classList.remove("hidden");
   $("fi-name").textContent = info.name;
   $("fi-count").textContent = info.subtitle_count;
   $("fi-path").textContent = info.local_path || "업로드 파일 (다운로드로만 저장 가능)";
-  if (!$("title").value.trim() && info.title) $("title").value = info.title;
-  if (info.is_series) $("is-series").checked = true;
+
+  if (changed) {
+    const hadContext = $("story-context").value.trim().length > 0;
+    $("story-context").value = "";
+    $("title").value = info.title || "";
+    $("is-series").checked = Boolean(info.is_series);
+    $("tmdb-results").classList.add("hidden");
+    clearTmdb();
+    updateTmdbNote();
+    if (hadContext) {
+      logLine("info", "다른 자막을 불러와 줄거리 및 등장인물 정보를 비웠습니다.");
+    }
+  }
+
   $("start-index").max = String(info.subtitle_count);
+  $("start-index").value = "1";
   updateOutputName();
 }
 
@@ -533,7 +661,9 @@ function collectRequest() {
     top_k: numberOrNull($("top-k")),
     thinking: $("thinking").checked,
     thinking_budget: Number($("thinking-budget").value || 2048),
+    reasoning_effort: $("reasoning-effort").value || null,
     streaming: $("streaming").checked,
+    strip_trailing_period: $("strip-period").checked,
     language_code: $("language-code").value.trim() || "ko",
     start_index: startIndex,
     save_to_source_dir: $("save-to-source").checked,
@@ -551,9 +681,10 @@ async function persistSettings(request) {
       top_k: request.top_k,
       thinking: request.thinking,
       thinking_budget: request.thinking_budget,
+      reasoning_effort: request.reasoning_effort,
       streaming: request.streaming,
+      strip_trailing_period: request.strip_trailing_period,
       language_code: request.language_code,
-      story_context: request.story_context,
       extra_instruction: request.extra_instruction,
     });
   } catch (error) {
@@ -668,9 +799,11 @@ function handleStatus(data) {
       if (data.has_result) $("download").classList.remove("hidden");
     } else if (data.status === "failed") {
       toast(`번역 실패: ${data.error || "알 수 없는 오류"}`, "error");
+      // 중단 지점까지 번역된 부분이 있으면 받아 갈 수 있게 함
       if (data.has_result) $("download").classList.remove("hidden");
     } else {
       toast("번역이 취소되었습니다.");
+      if (data.has_result) $("download").classList.remove("hidden");
     }
   }
 }

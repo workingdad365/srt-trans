@@ -18,6 +18,30 @@ from . import __version__
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8420
+# Ctrl+C 후 열린 연결을 정리하며 기다리는 최대 시간(초)
+GRACEFUL_SHUTDOWN_SECONDS = 3
+
+
+def _loopback_sockets(port: int) -> list[socket.socket]:
+    """IPv4/IPv6 루프백 양쪽에 바인딩한 소켓을 만듦.
+
+    Windows에서 localhost는 ::1(IPv6)로 먼저 해석되는데 IPv4에만 바인딩되어 있으면
+    요청마다 연결 타임아웃 후 폴백하느라 매우 느려짐. 양쪽 모두 받아 이를 없앰.
+    """
+    sockets: list[socket.socket] = []
+    for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            if family == socket.AF_INET6:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            sock.bind((address, port))
+            sock.listen(2048)
+            sock.set_inheritable(True)
+            sockets.append(sock)
+        except OSError:
+            # IPv6 미지원 등으로 실패하면 해당 계열만 건너뜀
+            continue
+    return sockets
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -70,7 +94,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[srt-trans] 포트 {port}이(가) 사용 중이라 {new_port}으로 실행합니다.")
         port = new_port
 
-    display_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
+    # localhost는 IPv6(::1)로 먼저 해석되는데 서버는 IPv4에 바인딩되므로,
+    # 요청마다 연결 타임아웃(약 2초) 후 폴백하게 됨. IP를 직접 사용해 이를 피함.
+    display_host = "127.0.0.1" if host == "0.0.0.0" else host
     url = f"http://{display_host}:{port}/"
 
     print(f"[srt-trans] v{__version__}")
@@ -84,17 +110,33 @@ def main(argv: list[str] | None = None) -> int:
             daemon=True,
         ).start()
 
+    # 기본 로컬 실행일 때만 IPv4/IPv6 루프백 양쪽에 바인딩함
+    sockets = _loopback_sockets(port) if host == DEFAULT_HOST and not args.reload else []
+
     try:
-        uvicorn.run(
-            "srt_trans.server:app",
-            host=host,
-            port=port,
-            reload=args.reload,
-            log_level="warning",
-            access_log=False,
-        )
+        if sockets:
+            config = uvicorn.Config(
+                "srt_trans.server:app",
+                log_level="warning",
+                access_log=False,
+                # SSE 같은 지속 연결이 열려 있어도 Ctrl+C 후 확실히 종료되도록 함
+                timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+            )
+            uvicorn.Server(config).run(sockets=sockets)
+        else:
+            uvicorn.run(
+                "srt_trans.server:app",
+                host=host,
+                port=port,
+                reload=args.reload,
+                log_level="warning",
+                access_log=False,
+                timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+            )
     except KeyboardInterrupt:
-        print("\n[srt-trans] 종료합니다.")
+        pass
+    # 소켓 정리는 uvicorn이 처리함. 여기서 또 닫으면 종료 중인 accept 콜백이 깨짐
+    print("\n[srt-trans] 종료합니다.")
     return 0
 
 

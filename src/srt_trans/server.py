@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import json
-import queue
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from .providers import (
     create_provider,
     get_provider_class,
     list_providers,
+    model_capabilities,
 )
 from .srt_utils import (
     SUBTITLE_EXTENSIONS,
@@ -44,10 +46,42 @@ from .translator import (
     TranslationCancelled,
     TranslationEngine,
     TranslationFailed,
+    TranslationResult,
     parse_subtitles,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+# 정적 파일 캐시 무효화에 사용할 에셋 목록
+_ASSET_FILES = ("style.css", "app.js")
+
+# 서버 종료 시 열려 있는 SSE 스트림을 정리하기 위한 신호
+_shutdown = asyncio.Event()
+
+
+def _quiet_shutdown_noise(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+    """브라우저를 닫거나 서버를 종료할 때 나는 무해한 예외를 감춤.
+
+    - WinError 10054: ProactorEventLoop가 이미 끊긴 소켓을 shutdown 할 때 발생
+    - _start_serving 콜백의 AssertionError: 종료 중 남아 있던 accept가 완료되면서
+      이미 닫힌 서버에 transport를 붙이려 할 때 발생하는 asyncio 내부 레이스
+    동작에는 영향이 없고 콘솔만 지저분해짐.
+    """
+    exception = context.get("exception")
+    if isinstance(exception, ConnectionResetError | ConnectionAbortedError):
+        return
+    if isinstance(exception, AssertionError) and "_start_serving" in repr(context.get("handle")):
+        return
+    loop.default_exception_handler(context)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _shutdown.clear()
+    asyncio.get_running_loop().set_exception_handler(_quiet_shutdown_noise)
+    try:
+        yield
+    finally:
+        _shutdown.set()
 # 업로드/로드한 원본을 메모리에 유지하는 시간(초)
 SOURCE_TTL_SECONDS = 7200
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -134,15 +168,21 @@ class ConfigUpdate(BaseModel):
     top_k: int | None = Field(default=None, ge=0)
     thinking: bool | None = None
     thinking_budget: int | None = Field(default=None, ge=0, le=24576)
+    reasoning_effort: str | None = None
     streaming: bool | None = None
+    strip_trailing_period: bool | None = None
     language_code: str | None = None
-    story_context: str | None = None
     extra_instruction: str | None = None
 
 
 class ModelsRequest(BaseModel):
     provider: str = DEFAULT_PROVIDER
     api_key: str | None = None
+
+
+class ModelInfoRequest(BaseModel):
+    provider: str = DEFAULT_PROVIDER
+    model: str = ""
 
 
 class LocalFileRequest(BaseModel):
@@ -179,10 +219,13 @@ class TranslateRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=0)
     thinking: bool = True
     thinking_budget: int = Field(default=2048, ge=0, le=24576)
+    # OpenAI 추론 모델용 추론 강도 (Gemini에서는 무시됨)
+    reasoning_effort: str | None = None
     streaming: bool = True
     language_code: str = "ko"
     start_index: int = Field(default=0, ge=0)
     save_to_source_dir: bool = True
+    strip_trailing_period: bool = True
 
     def resolve_context(self) -> tuple[str, str]:
         """실제 사용할 컨텍스트와 그 출처를 반환함.
@@ -201,15 +244,61 @@ class TranslateRequest(BaseModel):
 # --- 앱 구성 -------------------------------------------------------------
 
 
+def asset_version() -> str:
+    """정적 파일 내용으로 만든 짧은 해시.
+
+    브라우저가 옛 CSS/JS를 캐시해서 변경이 반영되지 않는 문제를 막기 위해
+    HTML의 에셋 URL 뒤에 붙임. 내용이 같으면 해시도 같으므로 불필요한
+    재다운로드가 생기지 않음.
+    """
+    digest = hashlib.sha256()
+    for name in _ASSET_FILES:
+        digest.update(name.encode("utf-8"))
+        try:
+            digest.update((STATIC_DIR / name).read_bytes())
+        except OSError:
+            digest.update(b"missing")
+    return digest.hexdigest()[:10]
+
+
+class AssetStaticFiles(StaticFiles):
+    """정적 파일 캐시 정책.
+
+    - `?v=<내용해시>` 가 붙은 요청: 내용이 바뀌면 URL이 바뀌므로 오래 캐시해도 안전함
+    - 쿼리 없이 직접 접근한 경우: 매번 재검증해 옛 파일이 남지 않게 함
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        query = scope.get("query_string", b"").decode("latin-1")
+        if "v=" in query:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="srt-trans", version=__version__, docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="srt-trans",
+        version=__version__,
+        docs_url=None,
+        redoc_url=None,
+        lifespan=_lifespan,
+    )
 
     # --- 정적 파일 ---
     @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    async def index() -> Response:
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        html = html.replace("__ASSET_V__", asset_version())
+        return Response(
+            content=html,
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", AssetStaticFiles(directory=STATIC_DIR), name="static")
 
     # --- 메타 ---
     @app.get("/api/providers")
@@ -254,6 +343,26 @@ def create_app() -> FastAPI:
         except ProviderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"models": model_list}
+
+    @app.post("/api/model-info")
+    async def model_info(payload: ModelInfoRequest) -> dict[str, Any]:
+        """선택한 모델이 지원하는 파라미터를 반환함(UI 입력란 활성화 판단용)."""
+        try:
+            capabilities = model_capabilities(payload.provider, payload.model)
+        except ProviderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "model": payload.model,
+            "thinking": capabilities.thinking,
+            "thinking_control": capabilities.thinking_control,
+            "effort_choices": capabilities.effort_choices,
+            "temperature": capabilities.temperature,
+            "top_p": capabilities.top_p,
+            "top_k": capabilities.top_k,
+            "streaming": capabilities.streaming,
+            "token_counting": capabilities.token_counting,
+            "notes": capabilities.notes,
+        }
 
     # --- TMDB ---
     def _tmdb_client(api_key: str | None) -> TMDBClient:
@@ -432,25 +541,29 @@ def _sse(event: dict[str, Any]) -> str:
 
 
 async def _event_stream(job: Job, request: Request):
-    """작업 이벤트를 SSE로 전달함."""
-    subscriber = job.subscribe()
-    loop = asyncio.get_running_loop()
+    """작업 이벤트를 SSE로 전달함.
+
+    블로킹 큐를 스레드로 기다리면 서버 종료 시 그 스레드가 남아 프로세스가
+    끝나지 않으므로, asyncio 큐로 대기함.
+    """
+    subscriber = job.subscribe(asyncio.get_running_loop())
     try:
         yield _sse({"type": "snapshot", **job.snapshot()})
-        while True:
+        while not _shutdown.is_set():
             if await request.is_disconnected():
                 break
             try:
-                event = await loop.run_in_executor(
-                    None, functools.partial(subscriber.get, timeout=1.0)
-                )
-            except queue.Empty:
+                event = await asyncio.wait_for(subscriber.queue.get(), timeout=1.0)
+            except TimeoutError:
                 yield ": keepalive\n\n"
                 continue
 
             yield _sse(event)
             if event.get("type") == "end":
                 break
+    except asyncio.CancelledError:
+        # 서버 종료 등으로 스트림이 취소된 경우 조용히 빠져나감
+        raise
     finally:
         job.unsubscribe(subscriber)
 
@@ -461,6 +574,7 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
     job.log("info", f"원본: {source.name}")
     job.log("info", f"프로바이더: {payload.provider} / 모델: {payload.model}")
 
+    engine: TranslationEngine | None = None
     try:
         subtitles = parse_subtitles(source.text)
         job.set_progress(payload.start_index, len(subtitles))
@@ -471,24 +585,40 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
             top_k=payload.top_k,
             thinking=payload.thinking,
             thinking_budget=payload.thinking_budget,
+            reasoning_effort=payload.reasoning_effort,
             streaming=payload.streaming,
         )
+
+        # 모델이 지원하지 않는 파라미터는 전송 전에 제거하고 사용자에게 알림
+        capabilities = model_capabilities(payload.provider, payload.model)
+        ignored = capabilities.unsupported(params)
+        if ignored:
+            job.log(
+                "warning",
+                f"{payload.model} 모델이 지원하지 않아 다음 설정을 제외합니다: {', '.join(ignored)}",
+            )
+            for name in ignored:
+                setattr(params, name, None)
+        for note in capabilities.notes:
+            job.log("info", note)
+
         provider = create_provider(
             payload.provider,
             api_key=config_manager.get_api_key(payload.provider),
             model=payload.model,
             params=params,
         )
-
-        capabilities = provider.capabilities()
         context, context_source = payload.resolve_context()
+        # 사고 지시문은 프롬프트로 사고를 제어하는 방식(Gemini)에서만 넣음.
+        # OpenAI 추론 모델은 reasoning_effort 파라미터가 그 역할을 하므로 제외함.
+        prompt_controls_thinking = capabilities.thinking_control in ("budget", "on_off")
         instruction = build_system_instruction(
             story_context=context,
             title=payload.title,
             is_series=payload.is_series,
             extra_instruction=payload.extra_instruction,
             thinking=payload.thinking,
-            thinking_supported=capabilities.thinking,
+            thinking_supported=prompt_controls_thinking,
         )
         if context_source == "manual":
             job.log("info", "직접 입력한 상세 줄거리 및 등장인물 정보를 번역 프롬프트에 반영했습니다.")
@@ -503,6 +633,7 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
             options=EngineOptions(
                 batch_size=payload.batch_size,
                 start_index=payload.start_index,
+                strip_trailing_period=payload.strip_trailing_period,
             ),
             on_progress=job.set_progress,
             on_log=job.log,
@@ -510,30 +641,61 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
         )
 
         result = engine.translate(subtitles)
-        output_text = result.compose()
-
-        output_path: str | None = None
-        if payload.save_to_source_dir and source.local_path is not None:
-            target = source.local_path.parent / job.output_name
-            try:
-                target.write_text(output_text, encoding="utf-8")
-                output_path = str(target)
-                job.log("success", f"저장 완료: {target}")
-            except OSError as exc:
-                job.log("error", f"파일 저장 실패: {exc}. 다운로드 버튼으로 받을 수 있습니다.")
-
-        job.set_result(output_text, output_path)
+        _store_result(job, result, source, payload)
         job.set_status("completed")
 
     except TranslationCancelled:
         job.log("warning", "번역이 취소되었습니다.")
+        _store_partial(job, engine, source, payload)
         job.set_status("cancelled")
     except (TranslationFailed, ProviderError) as exc:
         job.log("error", str(exc))
+        _store_partial(job, engine, source, payload)
         job.set_status("failed", str(exc))
     except Exception as exc:  # noqa: BLE001
         job.log("error", f"예상치 못한 오류: {exc}")
+        _store_partial(job, engine, source, payload)
         job.set_status("failed", str(exc))
+
+
+def _store_result(
+    job: Job, result: TranslationResult, source: SourceFile, payload: TranslateRequest
+) -> None:
+    """번역 결과를 저장하고 다운로드 가능한 상태로 만듦."""
+    output_text = result.compose()
+
+    output_path: str | None = None
+    if payload.save_to_source_dir and source.local_path is not None:
+        target = source.local_path.parent / job.output_name
+        try:
+            target.write_text(output_text, encoding="utf-8")
+            output_path = str(target)
+            job.log("success", f"저장 완료: {target}")
+        except OSError as exc:
+            job.log("error", f"파일 저장 실패: {exc}. 다운로드 버튼으로 받을 수 있습니다.")
+
+    job.set_result(output_text, output_path)
+
+
+def _store_partial(
+    job: Job, engine: TranslationEngine | None, source: SourceFile, payload: TranslateRequest
+) -> None:
+    """중단된 경우에도 여기까지 번역된 내용을 저장해 이어서 할 수 있게 함."""
+    if engine is None:
+        return
+    partial = engine.partial_result()
+    if partial is None:
+        return
+
+    done = engine.completed_count
+    job.log("info", f"{done}번 자막까지 번역된 결과를 저장합니다.")
+    job.set_progress(done)
+    _store_result(job, partial, source, payload)
+    if done < partial.total:
+        job.log(
+            "info",
+            f"이어서 하려면 고급 설정의 시작 자막 번호를 {done + 1}로 두고 다시 실행하세요.",
+        )
 
 
 app = create_app()

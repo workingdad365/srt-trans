@@ -20,9 +20,11 @@ from .base import (
     Turn,
 )
 from .gemini import GeminiProvider
+from .openai_provider import OpenAIProvider
 
 _PROVIDERS: dict[str, type[LLMProvider]] = {
     GeminiProvider.info.id: GeminiProvider,
+    OpenAIProvider.info.id: OpenAIProvider,
 }
 
 DEFAULT_PROVIDER = GeminiProvider.info.id
@@ -48,14 +50,21 @@ def create_provider(
     return get_provider_class(provider_id)(api_key=api_key, model=model, params=params)
 
 
+def model_capabilities(provider_id: str, model: str) -> ModelCapabilities:
+    """프로바이더/모델 조합의 기능 정보를 조회함(네트워크 호출 없음)."""
+    return get_provider_class(provider_id).model_capabilities(model)
+
+
 __all__ = [
     "AuthError",
     "Chunk",
     "ContentBlockedError",
     "DEFAULT_PROVIDER",
+    "GeminiProvider",
     "GenerationParams",
     "LLMProvider",
     "ModelCapabilities",
+    "OpenAIProvider",
     "ProviderError",
     "ProviderInfo",
     "QuotaExceededError",
@@ -63,4 +72,5 @@ __all__ = [
     "create_provider",
     "get_provider_class",
     "list_providers",
+    "model_capabilities",
 ]

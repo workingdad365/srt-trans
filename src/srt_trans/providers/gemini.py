@@ -176,18 +176,29 @@ class GeminiProvider(LLMProvider):
         except Exception as exc:  # noqa: BLE001 - SDK 예외를 공통 예외로 변환
             raise _translate_error(exc) from exc
 
-    def capabilities(self) -> ModelCapabilities:
-        limit: int | None = None
+    @classmethod
+    def model_capabilities(cls, model: str) -> ModelCapabilities:
+        thinking = _supports_thinking(model)
+        notes: list[str] = []
+        if thinking and not _supports_thinking_budget(model):
+            notes.append("이 모델은 thinking 사용 여부만 지정할 수 있고 예산은 조절되지 않습니다.")
+        return ModelCapabilities(
+            thinking=thinking,
+            thinking_control="budget" if _supports_thinking_budget(model) else ("on_off" if thinking else None),
+            temperature=True,
+            top_p=True,
+            top_k=True,
+            streaming=True,
+            token_counting=True,
+            notes=notes,
+        )
+
+    def output_token_limit(self) -> int | None:
         try:
             model_info = self.client.models.get(model=self.model)
-            limit = getattr(model_info, "output_token_limit", None)
+            return getattr(model_info, "output_token_limit", None)
         except Exception:  # noqa: BLE001 - 한도 조회 실패는 치명적이지 않음
-            limit = None
-        return ModelCapabilities(
-            thinking=_supports_thinking(self.model),
-            thinking_budget=_supports_thinking_budget(self.model),
-            output_token_limit=limit,
-        )
+            return None
 
     def count_tokens(self, text: str) -> int | None:
         try:

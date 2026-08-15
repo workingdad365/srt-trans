@@ -42,13 +42,20 @@ class ProviderInfo:
 
 @dataclass
 class GenerationParams:
-    """생성 파라미터. 지원하지 않는 값은 프로바이더가 무시함."""
+    """생성 파라미터. 지원하지 않는 값은 프로바이더가 걸러내고 전송하지 않음.
+
+    프로바이더마다 사고(reasoning) 제어 방식이 다름.
+    - Gemini: thinking + thinking_budget(토큰 수)
+    - OpenAI: reasoning_effort(단계 값)
+    각 프로바이더는 자신이 쓰는 필드만 사용하고 나머지는 무시함.
+    """
 
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
     thinking: bool = True
     thinking_budget: int = 2048
+    reasoning_effort: str | None = None
     streaming: bool = True
 
 
@@ -71,12 +78,40 @@ class Chunk:
 
 @dataclass
 class ModelCapabilities:
-    """선택된 모델이 지원하는 기능."""
+    """선택된 모델이 지원하는 기능.
 
+    모델명만으로 판정 가능한 정적 정보이며 네트워크 호출을 하지 않음.
+    UI가 지원하지 않는 입력란을 비활성화하는 데 사용함.
+    """
+
+    # 사고(reasoning) 기능 유무
     thinking: bool = False
-    thinking_budget: bool = False
-    output_token_limit: int | None = None
-    extra: dict = field(default_factory=dict)
+    # 사고 제어 방식: "budget"(토큰 수) | "effort"(단계) | None(제어 불가)
+    thinking_control: str | None = None
+    # thinking_control이 "effort"일 때 선택 가능한 값
+    effort_choices: list[str] = field(default_factory=list)
+    # 샘플링 파라미터 지원 여부
+    temperature: bool = False
+    top_p: bool = False
+    top_k: bool = False
+    streaming: bool = True
+    # 토큰 수 계산 API 제공 여부 (배치 크기 자동 축소에 사용)
+    token_counting: bool = False
+    # UI에 표시할 참고 사항
+    notes: list[str] = field(default_factory=list)
+
+    def unsupported(self, params: GenerationParams) -> list[str]:
+        """요청 파라미터 중 이 모델이 지원하지 않는 항목명을 반환함."""
+        ignored: list[str] = []
+        if params.temperature is not None and not self.temperature:
+            ignored.append("temperature")
+        if params.top_p is not None and not self.top_p:
+            ignored.append("top_p")
+        if params.top_k is not None and not self.top_k:
+            ignored.append("top_k")
+        if params.reasoning_effort and self.thinking_control != "effort":
+            ignored.append("reasoning_effort")
+        return ignored
 
 
 class LLMProvider(ABC):
@@ -107,13 +142,30 @@ class LLMProvider(ABC):
         except ProviderError:
             return False
 
-    def capabilities(self) -> ModelCapabilities:
-        """현재 모델의 기능을 반환함. 기본값은 미지원."""
+    @classmethod
+    def model_capabilities(cls, model: str) -> ModelCapabilities:
+        """모델명만으로 판정 가능한 기능 정보를 반환함(네트워크 호출 없음)."""
         return ModelCapabilities()
+
+    def capabilities(self) -> ModelCapabilities:
+        """현재 인스턴스 모델의 기능."""
+        return self.model_capabilities(self.model)
+
+    def output_token_limit(self) -> int | None:
+        """모델의 출력 토큰 한도. 조회할 수 없으면 None을 반환함."""
+        return None
 
     def count_tokens(self, text: str) -> int | None:
         """입력 텍스트의 토큰 수. 지원하지 않으면 None을 반환함."""
         return None
+
+    def output_format_instruction(self) -> str:
+        """프로바이더별 출력 형식 요구사항을 시스템 지시문에 덧붙일 문자열.
+
+        Gemini는 최상위 배열 스키마를 쓰지만 OpenAI 구조화 출력은 최상위가
+        객체여야 하므로, 형식 차이를 각 프로바이더가 스스로 설명함.
+        """
+        return ""
 
     # --- 생성 계열 -------------------------------------------------------
 

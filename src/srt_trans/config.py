@@ -35,13 +35,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "top_p": None,
     "top_k": None,
     "thinking": True,
+    # Gemini 계열: 사고 예산(토큰 수)
     "thinking_budget": 2048,
+    # OpenAI 추론 모델 계열: 추론 강도 (모델별 허용값이 다름)
+    "reasoning_effort": "medium",
     "streaming": True,
+    # 번역 결과에서 종결 마침표를 제거함 (모델이 놓친 경우 대비)
+    "strip_trailing_period": True,
     # 번역 대상 언어 코드 (출력 파일명은 movie.kor.srt 처럼 3글자로 정규화됨)
     "language_code": "ko",
-    # 마지막으로 사용한 상세 줄거리/등장인물 정보
-    "story_context": "",
-    # 마지막으로 사용한 추가 지시문
+    # 상세 줄거리/등장인물 정보는 작품마다 다르므로 저장하지 않음
+    # 마지막으로 사용한 추가 지시문 (작품과 무관한 지시라 유지함)
     "extra_instruction": "",
 }
 
@@ -83,7 +87,9 @@ class ConfigManager:
                 if self.config_path.exists():
                     loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
                     if isinstance(loaded, dict):
-                        self._data = {**DEFAULT_CONFIG, **loaded}
+                        # 더 이상 쓰지 않는 키(예: 예전 story_context)는 버림
+                        known = {k: v for k, v in loaded.items() if k in DEFAULT_CONFIG}
+                        self._data = {**DEFAULT_CONFIG, **known}
             except (OSError, json.JSONDecodeError):
                 # 설정 파일이 깨져 있으면 기본값으로 동작하되, 원본은 백업해 둠
                 self._backup_broken_config()

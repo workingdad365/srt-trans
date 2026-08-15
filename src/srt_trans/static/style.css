@@ -300,17 +300,63 @@ button.run:hover { background: #2f9c5d; }
 
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: 28px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 8px;
-  padding: 10px 18px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 13px 22px;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.45;
   z-index: 100;
-  max-width: 80vw;
+  max-width: min(680px, 84vw);
+  /* 기본(정보). 배경 자체를 밝게 잡아 페이지 배경과 면으로 구분되게 함 */
+  background: #2d5285;
+  color: #eaf2ff;
+  border: 1px solid #7aa9ff;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(79, 140, 255, 0.28);
+  animation: toast-in 0.18s ease-out;
 }
-.toast.error { border-left-color: var(--red); }
-.toast.ok { border-left-color: var(--green); }
+
+.toast::before {
+  content: "ℹ";
+  font-size: 17px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 오류: 붉은 면으로 채워 한눈에 구분되게 함 (페이지 배경 대비 2.47) */
+.toast.error {
+  background: #9a352e;
+  color: #fff0ee;
+  border-color: #ff9a90;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(224, 82, 74, 0.45);
+  animation: toast-in 0.18s ease-out, toast-shake 0.3s ease-in-out 0.18s;
+}
+.toast.error::before { content: "⚠"; color: #ffd9d5; }
+
+.toast.ok {
+  background: #20603d;
+  color: #eafff2;
+  border-color: #7fe3aa;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(55, 178, 108, 0.35);
+}
+.toast.ok::before { content: "✓"; color: #d5ffe6; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toast-shake {
+  0%, 100% { transform: translateX(-50%); }
+  25% { transform: translateX(calc(-50% - 5px)); }
+  75% { transform: translateX(calc(-50% + 5px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.error { animation: none; }
+}

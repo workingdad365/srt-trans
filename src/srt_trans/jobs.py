@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import queue
+import asyncio
 import threading
 import time
 import uuid
@@ -19,6 +19,29 @@ JobStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 MAX_LOG_LINES = 500
 # 완료된 작업을 메모리에 유지하는 시간(초)
 JOB_TTL_SECONDS = 3600
+
+
+@dataclass
+class Subscriber:
+    """SSE 구독자. 이벤트 루프에 직접 전달해 스레드를 점유하지 않음."""
+
+    loop: asyncio.AbstractEventLoop
+    queue: asyncio.Queue
+
+    def put(self, event: dict[str, Any]) -> None:
+        """작업 스레드에서 이벤트 루프로 안전하게 이벤트를 전달함."""
+        try:
+            self.loop.call_soon_threadsafe(self._put_nowait, event)
+        except RuntimeError:
+            # 이벤트 루프가 이미 닫힌 경우(서버 종료 중)
+            pass
+
+    def _put_nowait(self, event: dict[str, Any]) -> None:
+        try:
+            self.queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # 느린 구독자는 이벤트를 건너뜀
+            pass
 
 
 @dataclass
@@ -38,7 +61,7 @@ class Job:
     created_at: float = field(default_factory=time.time)
     finished_at: float | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
-    _subscribers: list[queue.Queue] = field(default_factory=list, repr=False)
+    _subscribers: list[Subscriber] = field(default_factory=list, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -59,13 +82,13 @@ class Job:
 
     # --- 이벤트 ----------------------------------------------------------
 
-    def subscribe(self) -> queue.Queue:
-        subscriber: queue.Queue = queue.Queue(maxsize=1000)
+    def subscribe(self, loop: asyncio.AbstractEventLoop) -> Subscriber:
+        subscriber = Subscriber(loop=loop, queue=asyncio.Queue(maxsize=1000))
         with self._lock:
             self._subscribers.append(subscriber)
         return subscriber
 
-    def unsubscribe(self, subscriber: queue.Queue) -> None:
+    def unsubscribe(self, subscriber: Subscriber) -> None:
         with self._lock:
             if subscriber in self._subscribers:
                 self._subscribers.remove(subscriber)
@@ -75,11 +98,7 @@ class Job:
         with self._lock:
             subscribers = list(self._subscribers)
         for subscriber in subscribers:
-            try:
-                subscriber.put_nowait(event)
-            except queue.Full:
-                # 느린 구독자는 이벤트를 건너뜀
-                pass
+            subscriber.put(event)
 
     # --- 상태 변경 -------------------------------------------------------
 

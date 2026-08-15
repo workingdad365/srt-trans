@@ -96,6 +96,49 @@ def build_output_name(source_name: str, language_code: str = "ko") -> str:
     return f"{stem}.{normalize_output_code(language_code)}.srt"
 
 
+# 닫는 서식 태그: </i>, </b>, </font>, ASS/SSA 오버라이드 {\an8} 등
+_CLOSING_MARKUP_RE = re.compile(r"(?:</[a-zA-Z][^>]*>|\{[^}]*\})\s*$")
+
+
+def strip_trailing_period(text: str) -> str:
+    """자막 한 항목의 종결 마침표를 제거함.
+
+    닫는 서식 태그 안쪽에 있는 마침표도 제거함.
+    말줄임표(...), 물음표, 느낌표는 건드리지 않음.
+
+    예) "<i>그는 돌아오지 않아.</i>" -> "<i>그는 돌아오지 않아</i>"
+        "이미 떠났어."               -> "이미 떠났어"
+        "잠깐만..."                  -> "잠깐만..."  (변경 없음)
+    """
+    if not text:
+        return text
+
+    head = text.rstrip()
+    trailing = text[len(head) :]
+
+    # 끝에 붙은 닫는 태그들을 떼어 내면서 그 앞의 마침표를 찾음
+    suffix = ""
+    while True:
+        match = _CLOSING_MARKUP_RE.search(head)
+        if not match:
+            break
+        suffix = head[match.start() :] + suffix
+        head = head[: match.start()].rstrip()
+
+    if not head.endswith("."):
+        return text
+    # 말줄임표는 유지함
+    if head.endswith(".."):
+        return text
+    # 약어/숫자 안의 마침표는 건드리지 않음 (예: "3.5", "U.S.")
+    if len(head) >= 2 and head[-2].isdigit():
+        return text
+    if len(head) >= 3 and head[-3] == "." and head[-2].isalpha():
+        return text
+
+    return head[:-1].rstrip() + suffix + trailing
+
+
 def dominant_direction(text: str) -> str:
     """문자열의 지배적 문자 방향을 반환함('rtl' 또는 'ltr')."""
     counts = Counter(ud.bidirectional(char) for char in text)
