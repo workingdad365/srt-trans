@@ -21,10 +21,12 @@ from .base import (
 )
 from .gemini import GeminiProvider
 from .openai_provider import OpenAIProvider
+from .openrouter import OpenRouterProvider
 
 _PROVIDERS: dict[str, type[LLMProvider]] = {
     GeminiProvider.info.id: GeminiProvider,
     OpenAIProvider.info.id: OpenAIProvider,
+    OpenRouterProvider.info.id: OpenRouterProvider,
 }
 
 DEFAULT_PROVIDER = GeminiProvider.info.id
@@ -65,6 +67,7 @@ __all__ = [
     "LLMProvider",
     "ModelCapabilities",
     "OpenAIProvider",
+    "OpenRouterProvider",
     "ProviderError",
     "ProviderInfo",
     "QuotaExceededError",

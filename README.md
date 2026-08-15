@@ -3,7 +3,7 @@
 SRT 자막 파일을 한국어 자막으로 번역하는 웹 기반 도구.
 
 `gemini-srt-translator` 와 `Gemini-SRT-translator-GUI` 의 번역 로직/프롬프트를 계승하되,
-다중 LLM 프로바이더를 염두에 둔 구조로 재작성함. 현재 Google Gemini와 OpenAI를 지원함.
+다중 LLM 프로바이더를 염두에 둔 구조로 재작성함. 현재 Google Gemini, OpenAI, OpenRouter를 지원함.
 
 ## 특징
 
@@ -152,6 +152,7 @@ API 키가 평문으로 저장되므로 파일 권한에 유의할 것.
 | Google Gemini | `thinking` + `thinking_budget`(2.5 이상) | 지원 | 지원 | 지원 |
 | OpenAI (GPT-5 이상 / o 시리즈) | `reasoning_effort` | **미지원**(1 고정) | 미지원 | 미지원 |
 | OpenAI (GPT-4o 등 이전 모델) | 없음 | 지원 | 미지원 | 미지원 |
+| OpenRouter | 모델별 (API가 알려주는 값 사용) | 모델별 | 모델별 | 미지원 |
 
 모델을 고르면 UI가 해당 모델이 지원하는 입력란만 활성화하고, 지원하지 않는 값이 요청에 섞여 있으면
 번역 시작 시 로그로 알린 뒤 전송 대상에서 제외함.
@@ -169,6 +170,19 @@ API 키가 평문으로 저장되므로 파일 권한에 유의할 것.
 - **안전 설정**: `safety_settings`는 Gemini 전용이며 OpenAI에는 전송하지 않음
 - **배치 크기 자동 축소**: 토큰 계산 API가 있는 Gemini에서만 동작함. OpenAI는 응답이 길이 한도에 걸리면
   (`finish_reason=length`) 오류로 알리고 배치 크기를 줄이도록 안내함
+
+### OpenRouter
+
+여러 벤더의 모델을 하나의 OpenAI 호환 API로 중계하므로 모델마다 지원 파라미터가 크게 다름
+(현재 400여 개 모델 중 `temperature`를 받지 않는 모델이 80여 개, 구조화 출력을 지원하지 않는 모델이
+70여 개). 따라서 추측하지 않고 모델 목록 API가 알려주는 값을 그대로 사용함.
+
+- `GET /api/v1/models`(인증 불필요)의 `supported_parameters`로 temperature / top_p / top_k 지원 여부 판정
+- `reasoning.supported_efforts`가 있는 모델만 추론 강도를 조절할 수 있게 함
+  (허용값이 `high/medium/low/none`, `xhigh/medium/low` 등 모델마다 다름)
+- 구조화 출력 지원 시 `json_schema`(strict) + `provider.require_parameters`로 지원 제공자에게만 라우팅,
+  미지원이면 `json_object`, 그것도 없으면 `response_format` 생략
+- 메타데이터는 1시간 캐시함. 모델이 많아 UI에 검색 필터를 제공함
 
 ## 프로바이더 추가 방법
 
@@ -192,6 +206,7 @@ src/srt_trans/
     base.py         # 프로바이더 추상 인터페이스
     gemini.py       # Gemini 구현
     openai_provider.py  # OpenAI 구현 (GPT-5 이상/이전 모델 파라미터 분기)
+    openrouter.py   # OpenRouter 구현 (모델 메타데이터 기반 파라미터 판정)
   jobs.py           # 작업 상태 및 SSE 이벤트
   config.py         # 설정 저장/로드
   tmdb.py           # TMDB 클라이언트

@@ -43,6 +43,12 @@
           <button id="load-models" class="ghost" type="button">모델 목록 불러오기</button>
         </div>
 
+        <div class="row" id="model-filter-row">
+          <label for="model-filter">모델 검색</label>
+          <input type="text" id="model-filter" placeholder="예: gemini, claude, gpt-5" autocomplete="off" />
+          <span id="model-count" class="state"></span>
+        </div>
+
         <div class="row">
           <label for="tmdb-key">TMDB API 키</label>
           <input type="password" id="tmdb-key" placeholder="선택 사항 · 작품 정보 검색용" autocomplete="off" />

@@ -13,6 +13,9 @@ const state = {
   tmdb: null,
   // 현재 선택한 모델이 지원하는 파라미터 정보
   capabilities: null,
+  // 마지막으로 불러온 전체 모델 목록 (검색 필터용)
+  models: [],
+  modelsLoaded: false,
 };
 
 // --- 공통 유틸 ------------------------------------------------------------
@@ -120,16 +123,13 @@ function applyProviderView() {
 
   updateKeyState();
 
-  // 프로바이더가 바뀌면 이전 프로바이더의 모델이 남지 않도록 항상 초기화함
+  // 프로바이더가 바뀌면 이전 프로바이더의 모델 목록이 남지 않도록 초기화함
   const providerId = $("provider").value;
   const model = ((state.config && state.config.models) || {})[providerId] || "";
-  const select = $("model");
-  select.innerHTML = "";
-  const option = document.createElement("option");
-  option.value = model;
-  option.textContent = model || "모델 목록을 불러오세요";
-  select.appendChild(option);
-  select.value = model;
+  state.models = model ? [model] : [];
+  state.modelsLoaded = false;
+  $("model-filter").value = "";
+  renderModelOptions(model);
 
   refreshCapabilities();
 }
@@ -211,6 +211,10 @@ function bindEvents() {
   $("save-tmdb-key").addEventListener("click", saveTmdbKey);
   $("load-models").addEventListener("click", loadModels);
   $("model").addEventListener("change", saveSelectedModel);
+  $("model-filter").addEventListener("input", () => {
+    renderModelOptions();
+    saveSelectedModel();
+  });
 
   setupDropzone();
   $("load-local").addEventListener("click", loadLocalFile);
@@ -293,6 +297,49 @@ async function saveSelectedModel() {
     toast(error.message, "error");
   }
   await refreshCapabilities();
+}
+
+/**
+ * 검색어에 맞는 모델만 드롭다운에 채움.
+ * OpenRouter처럼 모델이 수백 개인 경우를 위해 필요함.
+ */
+function renderModelOptions(preferred) {
+  const keyword = $("model-filter").value.trim().toLowerCase();
+  const words = keyword.split(/\s+/).filter(Boolean);
+  const matched = words.length
+    ? state.models.filter((model) => {
+        const lowered = model.toLowerCase();
+        return words.every((word) => lowered.includes(word));
+      })
+    : state.models;
+
+  const select = $("model");
+  const current = preferred || select.value;
+  select.innerHTML = "";
+
+  if (!matched.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = state.models.length ? "검색 결과 없음" : "모델 목록을 불러오세요";
+    select.appendChild(option);
+  } else {
+    for (const model of matched) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      select.appendChild(option);
+    }
+    select.value = current && matched.includes(current) ? current : matched[0];
+  }
+
+  const count = $("model-count");
+  if (!state.modelsLoaded) {
+    count.textContent = "";
+  } else if (words.length) {
+    count.textContent = `${matched.length} / ${state.models.length}개`;
+  } else {
+    count.textContent = `${state.models.length}개`;
+  }
 }
 
 // --- 모델별 지원 파라미터 -------------------------------------------------
@@ -381,17 +428,11 @@ async function loadModels() {
       logLine("warning", `${label}: 모델 목록이 비어 있습니다.`);
       return;
     }
-    const select = $("model");
-    const previous = select.value;
-    select.innerHTML = "";
-    for (const model of data.models) {
-      const option = document.createElement("option");
-      option.value = model;
-      option.textContent = model;
-      select.appendChild(option);
-    }
+    state.models = data.models;
+    state.modelsLoaded = true;
+    const previous = $("model").value;
     const saved = (state.config && (state.config.models || {})[providerId]) || previous;
-    select.value = saved && data.models.includes(saved) ? saved : data.models[0];
+    renderModelOptions(saved);
     toast(`${label} 모델 ${data.models.length}개를 불러왔습니다.`, "ok");
     logLine("success", `${label}: 모델 ${data.models.length}개 조회 완료`);
     await saveSelectedModel();
