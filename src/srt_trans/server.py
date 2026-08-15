@@ -32,6 +32,7 @@ from .providers import (
     list_providers,
     model_capabilities,
 )
+from .providers.openrouter import ROUTE_VARIANTS, fetch_endpoints
 from .srt_utils import (
     SUBTITLE_EXTENSIONS,
     build_output_name,
@@ -173,6 +174,7 @@ class ConfigUpdate(BaseModel):
     strip_trailing_period: bool | None = None
     language_code: str | None = None
     extra_instruction: str | None = None
+    routing: dict[str, Any] | None = None
 
 
 class ModelsRequest(BaseModel):
@@ -183,6 +185,32 @@ class ModelsRequest(BaseModel):
 class ModelInfoRequest(BaseModel):
     provider: str = DEFAULT_PROVIDER
     model: str = ""
+
+
+class ModelEndpointsRequest(BaseModel):
+    provider: str = DEFAULT_PROVIDER
+    model: str = ""
+
+
+class RoutingOptions(BaseModel):
+    """OpenRouter 전용 라우팅 설정."""
+
+    # "" | "nitro" | "floor" | "exacto"
+    route_variant: str = ""
+    # 우선 사용할 제공자 슬러그 목록
+    providers: list[str] = Field(default_factory=list)
+    # 지정한 제공자가 실패하면 다른 곳으로 넘어갈지 여부
+    allow_fallbacks: bool = True
+    # 데이터 수집을 하지 않는 제공자만 사용
+    deny_data_collection: bool = False
+
+    def to_extra(self) -> dict[str, Any]:
+        return {
+            "route_variant": self.route_variant,
+            "providers": self.providers,
+            "allow_fallbacks": self.allow_fallbacks,
+            "deny_data_collection": self.deny_data_collection,
+        }
 
 
 class LocalFileRequest(BaseModel):
@@ -226,6 +254,7 @@ class TranslateRequest(BaseModel):
     start_index: int = Field(default=0, ge=0)
     save_to_source_dir: bool = True
     strip_trailing_period: bool = True
+    routing: RoutingOptions = Field(default_factory=RoutingOptions)
 
     def resolve_context(self) -> tuple[str, str]:
         """실제 사용할 컨텍스트와 그 출처를 반환함.
@@ -362,7 +391,30 @@ def create_app() -> FastAPI:
             "streaming": capabilities.streaming,
             "token_counting": capabilities.token_counting,
             "notes": capabilities.notes,
+            # OpenRouter만 제공자 선택/라우팅 변형을 지원함
+            "supports_routing": payload.provider == "openrouter",
+            "route_variants": (
+                [
+                    {"value": key, "label": item["label"]}
+                    for key, item in ROUTE_VARIANTS.items()
+                ]
+                if payload.provider == "openrouter"
+                else []
+            ),
         }
+
+    @app.post("/api/model-endpoints")
+    async def model_endpoints(payload: ModelEndpointsRequest) -> dict[str, Any]:
+        """모델을 제공하는 제공자(엔드포인트) 목록을 반환함."""
+        if payload.provider != "openrouter":
+            return {"endpoints": []}
+        if not payload.model.strip():
+            raise HTTPException(status_code=400, detail="모델을 먼저 선택하세요.")
+        try:
+            endpoints = await asyncio.to_thread(fetch_endpoints, payload.model)
+        except ProviderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"endpoints": endpoints}
 
     # --- TMDB ---
     def _tmdb_client(api_key: str | None) -> TMDBClient:
@@ -587,6 +639,7 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
             thinking_budget=payload.thinking_budget,
             reasoning_effort=payload.reasoning_effort,
             streaming=payload.streaming,
+            extra=payload.routing.to_extra(),
         )
 
         # 모델이 지원하지 않는 파라미터는 전송 전에 제거하고 사용자에게 알림
@@ -608,6 +661,7 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
             model=payload.model,
             params=params,
         )
+        _log_routing(job, payload, provider)
         context, context_source = payload.resolve_context()
         # 사고 지시문은 프롬프트로 사고를 제어하는 방식(Gemini)에서만 넣음.
         # OpenAI 추론 모델은 reasoning_effort 파라미터가 그 역할을 하므로 제외함.
@@ -656,6 +710,41 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
         job.log("error", f"예상치 못한 오류: {exc}")
         _store_partial(job, engine, source, payload)
         job.set_status("failed", str(exc))
+
+
+def _log_routing(job: Job, payload: TranslateRequest, provider: Any) -> None:
+    """OpenRouter 라우팅 설정을 실제 요청 기준으로 알림."""
+    if payload.provider != "openrouter":
+        return
+
+    effective = getattr(provider, "effective_model", None)
+    model_id = effective() if callable(effective) else payload.model
+    if model_id != payload.model:
+        job.log("info", f"라우팅 변형을 적용했습니다: {model_id}")
+
+    # 실제로 전송되는 추론 강도를 알림(요청값과 다를 수 있음)
+    if hasattr(provider, "_resolve_effort"):
+        from .providers.openrouter import _model_meta
+
+        effort = provider._resolve_effort(_model_meta(payload.model))
+        if effort == "none":
+            job.log("info", "추론을 끄고 요청합니다 (reasoning effort: none).")
+        elif effort:
+            job.log("info", f"추론 강도: {effort}")
+        elif payload.reasoning_effort:
+            job.log(
+                "warning",
+                f"이 모델은 추론을 끌 수 없어 '{payload.reasoning_effort}' 설정을 적용하지 못했습니다.",
+            )
+
+    options = provider._routing_options() if hasattr(provider, "_routing_options") else {}
+    if order := options.get("order"):
+        fallback = "허용" if options.get("allow_fallbacks", True) else "차단"
+        job.log("info", f"지정한 제공자 순서: {', '.join(order)} (다른 제공자로 전환 {fallback})")
+    if sort := options.get("sort"):
+        job.log("info", f"제공자 정렬 기준: {sort}")
+    if options.get("data_collection") == "deny":
+        job.log("info", "데이터를 수집하지 않는 제공자만 사용합니다.")
 
 
 def _store_result(

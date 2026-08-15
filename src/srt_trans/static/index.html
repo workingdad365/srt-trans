@@ -49,6 +49,30 @@
           <span id="model-count" class="state"></span>
         </div>
 
+        <!-- OpenRouter 전용: 라우팅 변형과 제공자 지정 -->
+        <div id="routing-box" class="routing-box hidden">
+          <div class="row">
+            <label for="route-variant">라우팅 방식</label>
+            <select id="route-variant">
+              <option value="">기본 (가격·속도 균형)</option>
+            </select>
+            <label class="check"><input type="checkbox" id="deny-data-collection" /> 데이터 미수집 제공자만</label>
+          </div>
+
+          <div class="row">
+            <label for="provider-list">제공자 지정</label>
+            <button id="load-endpoints" class="ghost" type="button">제공자 목록 불러오기</button>
+            <label class="check"><input type="checkbox" id="allow-fallbacks" checked /> 실패 시 다른 제공자 허용</label>
+            <button id="clear-providers" class="ghost small" type="button">선택 해제</button>
+          </div>
+
+          <div id="provider-list" class="provider-list hidden"></div>
+          <p class="hint">
+            같은 모델이라도 제공자마다 가격·속도·컨텍스트 길이·구조화 출력 지원 여부가 다릅니다.
+            선택하지 않으면 OpenRouter가 자동으로 고릅니다. 여러 개를 고르면 위에서부터 순서대로 시도합니다.
+          </p>
+        </div>
+
         <div class="row">
           <label for="tmdb-key">TMDB API 키</label>
           <input type="password" id="tmdb-key" placeholder="선택 사항 · 작품 정보 검색용" autocomplete="off" />
@@ -158,6 +182,7 @@
           <div class="field-inline">
             <label for="batch-size">배치 크기</label>
             <input type="number" id="batch-size" min="1" max="2000" value="300" />
+            <span class="field-hint">한 번에 보낼 자막 줄 수</span>
           </div>
           <div class="field-inline">
             <label for="language-code">출력 언어 코드</label>
@@ -186,6 +211,7 @@
           <div class="field-inline" id="wrap-reasoning-effort">
             <label for="reasoning-effort">추론 강도</label>
             <select id="reasoning-effort"></select>
+            <span class="field-hint">낮을수록 빠름</span>
           </div>
         </div>
         <div class="row wrap">
@@ -193,6 +219,19 @@
           <label class="check"><input type="checkbox" id="streaming" checked /> 스트리밍 응답</label>
           <label class="check" title="&lt;i&gt; 등 서식 태그 안쪽에 남은 마침표까지 제거합니다"><input type="checkbox" id="strip-period" checked /> 문장 끝 마침표 제거</label>
           <label class="check"><input type="checkbox" id="save-to-source" checked /> 원본 폴더에 저장</label>
+        </div>
+        <div class="tips">
+          <p class="hint">
+            <b>추론 강도</b> — 자막 번역은 깊은 추론이 필요한 작업이 아닙니다. 강도를 낮추거나
+            <b>사용 안 함</b>으로 두면 속도와 비용에서 유리하고 번역 품질 차이는 크지 않습니다.
+            추론을 끌 수 없는 모델에서는 지원하는 가장 낮은 단계가 선택됩니다.
+          </p>
+          <p class="hint">
+            <b>배치 크기</b> — 로그에 <i>"N줄을 요청했으나 M줄만 정상 반환되었습니다"</i> 나
+            <i>"자막 번호 순서가 어긋났습니다"</i> 가 자주 보이면 배치 크기를 줄이세요.
+            한 번에 보내는 줄이 많을수록 모델이 형식을 놓치기 쉽습니다. 반대로 너무 작으면
+            앞뒤 맥락이 줄어 번역 일관성이 떨어집니다.
+          </p>
         </div>
         <p class="hint" id="model-notes"></p>
       </div>

@@ -100,6 +100,20 @@ main {
 }
 .field-inline { display: flex; flex-direction: column; gap: 4px; }
 .field-inline label { color: var(--muted); font-size: 13px; }
+.field-hint { color: #6b7285; font-size: 11.5px; }
+
+.tips {
+  background: #14161b;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tips b { color: var(--text); }
+.tips i { color: var(--yellow); font-style: normal; }
 
 input[type="text"], input[type="password"], input[type="number"], select, textarea {
   background: #14161b;
@@ -220,6 +234,64 @@ button.run:hover { background: #2f9c5d; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+.routing-box {
+  background: #14161b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: #101216;
+}
+.provider-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.provider-item:hover { background: var(--panel-2); }
+.provider-item.selected { background: rgba(79, 140, 255, 0.12); border-color: var(--accent); }
+.provider-item input { margin-top: 3px; accent-color: var(--accent); }
+.provider-item .meta { flex: 1; min-width: 0; }
+.provider-item .meta b { display: block; font-size: 13.5px; }
+.provider-item .meta .sub {
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+}
+.provider-item .order-badge {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.badge-warn { color: var(--yellow); }
 
 .tmdb-selected {
   background: #14161b;

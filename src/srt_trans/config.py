@@ -37,11 +37,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "thinking": True,
     # Gemini 계열: 사고 예산(토큰 수)
     "thinking_budget": 2048,
-    # OpenAI 추론 모델 계열: 추론 강도 (모델별 허용값이 다름)
-    "reasoning_effort": "medium",
+    # OpenAI/OpenRouter 추론 모델 계열: 추론 강도 (모델별 허용값이 다름).
+    # 자막 번역은 깊은 추론이 필요하지 않아 가장 낮은 단계를 기본으로 둠.
+    # 추론을 끌 수 없는 모델에서는 UI가 자동으로 그다음 낮은 단계를 고름
+    "reasoning_effort": "none",
     "streaming": True,
     # 번역 결과에서 종결 마침표를 제거함 (모델이 놓친 경우 대비)
     "strip_trailing_period": True,
+    # OpenRouter 라우팅 설정 { route_variant, providers, allow_fallbacks, deny_data_collection }
+    "routing": {},
     # 번역 대상 언어 코드 (출력 파일명은 movie.kor.srt 처럼 3글자로 정규화됨)
     "language_code": "ko",
     # 상세 줄거리/등장인물 정보는 작품마다 다르므로 저장하지 않음

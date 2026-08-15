@@ -2,6 +2,17 @@
 
 const $ = (id) => document.getElementById(id);
 
+// 추론 강도 표시 라벨 (낮은 것부터)
+const EFFORT_LABELS = {
+  none: "사용 안 함 (none)",
+  minimal: "최소 (minimal)",
+  low: "낮음 (low)",
+  medium: "보통 (medium)",
+  high: "높음 (high)",
+  xhigh: "매우 높음 (xhigh)",
+  max: "최대 (max)",
+};
+
 const state = {
   providers: [],
   config: null,
@@ -16,6 +27,12 @@ const state = {
   // 마지막으로 불러온 전체 모델 목록 (검색 필터용)
   models: [],
   modelsLoaded: false,
+  // OpenRouter 제공자 목록과 선택 순서
+  endpoints: [],
+  selectedProviders: [],
+  lastModel: "",
+  // 사용자가 직접 고른 추론 강도 (자동 대체된 값과 구분하기 위함)
+  userEffort: "",
 };
 
 // --- 공통 유틸 ------------------------------------------------------------
@@ -166,6 +183,7 @@ function applyConfig(config) {
   if (config.top_k !== null && config.top_k !== undefined) $("top-k").value = config.top_k;
   // 줄거리/등장인물 정보는 작품마다 다르므로 저장/복원하지 않음
   if (config.extra_instruction) $("extra-instruction").value = config.extra_instruction;
+  applyRouting(config.routing);
 }
 
 function updateKeyState() {
@@ -214,6 +232,14 @@ function bindEvents() {
   $("model-filter").addEventListener("input", () => {
     renderModelOptions();
     saveSelectedModel();
+  });
+  $("reasoning-effort").addEventListener("change", () => {
+    state.userEffort = $("reasoning-effort").value;
+  });
+  $("load-endpoints").addEventListener("click", loadEndpoints);
+  $("clear-providers").addEventListener("click", () => {
+    state.selectedProviders = [];
+    renderEndpoints();
   });
 
   setupDropzone();
@@ -288,6 +314,15 @@ async function saveTmdbKey() {
 async function saveSelectedModel() {
   const model = $("model").value;
   if (!model) return;
+
+  // 모델이 바뀌면 이전 모델의 제공자 목록은 의미가 없음
+  if (state.lastModel && state.lastModel !== model) {
+    state.endpoints = [];
+    state.selectedProviders = [];
+    renderEndpoints();
+  }
+  state.lastModel = model;
+
   try {
     state.config = await postJson("/api/config", {
       provider: $("provider").value,
@@ -342,6 +377,155 @@ function renderModelOptions(preferred) {
   }
 }
 
+// --- OpenRouter 라우팅 ----------------------------------------------------
+
+function renderRouteVariants(variants) {
+  const select = $("route-variant");
+  const previous = select.value;
+  select.innerHTML = "";
+  const base = document.createElement("option");
+  base.value = "";
+  base.textContent = "기본 (가격·속도 균형)";
+  select.appendChild(base);
+  for (const variant of variants || []) {
+    const option = document.createElement("option");
+    option.value = variant.value;
+    option.textContent = variant.label;
+    select.appendChild(option);
+  }
+  const saved = savedRouting().route_variant || previous || "";
+  select.value = Array.from(select.options).some((o) => o.value === saved) ? saved : "";
+}
+
+function savedRouting() {
+  return (state.config && state.config.routing) || {};
+}
+
+function formatPrice(value) {
+  const price = Number(value);
+  if (!Number.isFinite(price) || price <= 0) return "무료";
+  // 응답은 토큰당 단가라 100만 토큰 기준으로 환산함
+  return `$${(price * 1e6).toFixed(2)}/M`;
+}
+
+async function loadEndpoints() {
+  const model = $("model").value;
+  if (!model) {
+    toast("먼저 모델을 선택하세요.", "error");
+    return;
+  }
+  const button = $("load-endpoints");
+  button.disabled = true;
+  button.textContent = "불러오는 중...";
+  try {
+    const data = await postJson("/api/model-endpoints", {
+      provider: $("provider").value,
+      model,
+    });
+    state.endpoints = data.endpoints || [];
+    // 목록에 없는 제공자는 선택에서 제거함
+    const available = new Set(state.endpoints.map((e) => e.tag));
+    state.selectedProviders = state.selectedProviders.filter((tag) => available.has(tag));
+    renderEndpoints();
+    if (!state.endpoints.length) {
+      toast("이 모델의 제공자 정보를 찾지 못했습니다.", "error");
+    } else {
+      toast(`제공자 ${state.endpoints.length}곳을 불러왔습니다.`, "ok");
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "제공자 목록 불러오기";
+  }
+}
+
+function renderEndpoints() {
+  const container = $("provider-list");
+  container.innerHTML = "";
+  if (!state.endpoints.length) {
+    container.classList.add("hidden");
+    return;
+  }
+  container.classList.remove("hidden");
+
+  for (const endpoint of state.endpoints) {
+    const order = state.selectedProviders.indexOf(endpoint.tag);
+    const row = document.createElement("label");
+    row.className = `provider-item${order >= 0 ? " selected" : ""}`;
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = order >= 0;
+    checkbox.addEventListener("change", () => toggleProvider(endpoint.tag));
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const title = document.createElement("b");
+    title.textContent = `${endpoint.provider_name} · ${endpoint.tag}`;
+
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    const parts = [
+      `입력 ${formatPrice(endpoint.prompt_price)}`,
+      `출력 ${formatPrice(endpoint.completion_price)}`,
+    ];
+    if (endpoint.context_length) parts.push(`컨텍스트 ${endpoint.context_length.toLocaleString()}`);
+    if (endpoint.max_completion_tokens) {
+      parts.push(`출력한도 ${endpoint.max_completion_tokens.toLocaleString()}`);
+    }
+    if (typeof endpoint.uptime_last_30m === "number") {
+      parts.push(`가동률 ${endpoint.uptime_last_30m.toFixed(1)}%`);
+    }
+    for (const text of parts) {
+      const span = document.createElement("span");
+      span.textContent = text;
+      sub.appendChild(span);
+    }
+    if (!endpoint.supports_structured_outputs) {
+      const warn = document.createElement("span");
+      warn.className = "badge-warn";
+      warn.textContent = "구조화 출력 미지원";
+      sub.appendChild(warn);
+    }
+
+    meta.append(title, sub);
+    row.append(checkbox, meta);
+
+    if (order >= 0) {
+      const badge = document.createElement("span");
+      badge.className = "order-badge";
+      badge.textContent = String(order + 1);
+      row.appendChild(badge);
+    }
+    container.appendChild(row);
+  }
+}
+
+function toggleProvider(tag) {
+  const index = state.selectedProviders.indexOf(tag);
+  if (index >= 0) state.selectedProviders.splice(index, 1);
+  else state.selectedProviders.push(tag);
+  renderEndpoints();
+}
+
+function collectRouting() {
+  return {
+    route_variant: $("route-variant").value || "",
+    providers: state.selectedProviders.slice(),
+    allow_fallbacks: $("allow-fallbacks").checked,
+    deny_data_collection: $("deny-data-collection").checked,
+  };
+}
+
+function applyRouting(routing) {
+  const saved = routing || {};
+  state.selectedProviders = Array.isArray(saved.providers) ? saved.providers.slice() : [];
+  $("allow-fallbacks").checked = saved.allow_fallbacks !== false;
+  $("deny-data-collection").checked = Boolean(saved.deny_data_collection);
+  renderEndpoints();
+}
+
 // --- 모델별 지원 파라미터 -------------------------------------------------
 
 async function refreshCapabilities() {
@@ -377,6 +561,11 @@ function applyCapabilities(caps) {
   const unknown = !caps;
   const reason = "선택한 모델이 지원하지 않는 설정입니다";
 
+  // OpenRouter에서만 라우팅 설정을 보여 줌
+  const routingOn = Boolean(caps && caps.supports_routing);
+  $("routing-box").classList.toggle("hidden", !routingOn);
+  if (routingOn) renderRouteVariants(caps.route_variants);
+
   setFieldEnabled("wrap-temperature", "temperature", unknown || caps.temperature, reason);
   setFieldEnabled("wrap-top-p", "top-p", unknown || caps.top_p, reason);
   setFieldEnabled("wrap-top-k", "top-k", unknown || caps.top_k, reason);
@@ -391,15 +580,20 @@ function applyCapabilities(caps) {
   $("wrap-reasoning-effort").classList.toggle("hidden", !effortOn);
   if (effortOn) {
     const select = $("reasoning-effort");
-    const previous = select.value || (state.config && state.config.reasoning_effort) || "medium";
+    // 사용자가 직접 고른 값만 유지함. 모델이 지원하지 않아 자동 대체된 값은
+    // 다음 모델에서 다시 기본값(최저 단계)으로 돌아가야 함
+    const preferred = state.userEffort || (state.config && state.config.reasoning_effort) || "";
     select.innerHTML = "";
     for (const choice of caps.effort_choices) {
       const option = document.createElement("option");
       option.value = choice;
-      option.textContent = choice;
+      option.textContent = EFFORT_LABELS[choice] || choice;
       select.appendChild(option);
     }
-    select.value = caps.effort_choices.includes(previous) ? previous : caps.effort_choices.at(-2) || caps.effort_choices[0];
+    // 선택지는 낮은 단계부터 정렬되어 오므로 첫 번째가 최저 단계임.
+    // 추론을 끌 수 없는 모델이면 자연히 그다음 낮은 단계가 선택됨
+    const lowest = caps.effort_choices[0];
+    select.value = caps.effort_choices.includes(preferred) ? preferred : lowest;
     select.disabled = false;
   }
 
@@ -708,6 +902,7 @@ function collectRequest() {
     language_code: $("language-code").value.trim() || "ko",
     start_index: startIndex,
     save_to_source_dir: $("save-to-source").checked,
+    routing: collectRouting(),
   };
 }
 
@@ -727,6 +922,7 @@ async function persistSettings(request) {
       strip_trailing_period: request.strip_trailing_period,
       language_code: request.language_code,
       extra_instruction: request.extra_instruction,
+      routing: request.routing,
     });
   } catch (error) {
     // 설정 저장 실패가 번역을 막지는 않음

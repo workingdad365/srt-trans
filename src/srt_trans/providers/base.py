@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 
 class ProviderError(Exception):
@@ -57,6 +57,9 @@ class GenerationParams:
     thinking_budget: int = 2048
     reasoning_effort: str | None = None
     streaming: bool = True
+    # 특정 프로바이더에만 해당하는 옵션(예: OpenRouter의 라우팅 설정).
+    # 해당 프로바이더만 읽고 나머지는 무시함
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

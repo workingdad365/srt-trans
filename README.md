@@ -178,11 +178,42 @@ API 키가 평문으로 저장되므로 파일 권한에 유의할 것.
 70여 개). 따라서 추측하지 않고 모델 목록 API가 알려주는 값을 그대로 사용함.
 
 - `GET /api/v1/models`(인증 불필요)의 `supported_parameters`로 temperature / top_p / top_k 지원 여부 판정
-- `reasoning.supported_efforts`가 있는 모델만 추론 강도를 조절할 수 있게 함
-  (허용값이 `high/medium/low/none`, `xhigh/medium/low` 등 모델마다 다름)
+- 추론 강도는 `reasoning.supported_efforts`를 그대로 선택지로 보여 줌
+  (모델마다 다름: `high/medium/low/none`, `xhigh/high`, `max/high/low` 등)
 - 구조화 출력 지원 시 `json_schema`(strict) + `provider.require_parameters`로 지원 제공자에게만 라우팅,
   미지원이면 `json_object`, 그것도 없으면 `response_format` 생략
 - 메타데이터는 1시간 캐시함. 모델이 많아 UI에 검색 필터를 제공함
+
+#### 추론 강도 처리
+
+추론 강도 체계는 모델마다 크게 다름. `none < minimal < low < medium < high < xhigh < max` 순서이며,
+어떤 모델은 `xhigh/high`만, 어떤 모델은 `max/high/low`만 지원함.
+
+- **요청값을 임의로 바꾸지 않음.** 지원하지 않는 단계는 OpenRouter가 가장 가까운 단계로 변환해 주므로,
+  낮추려는 의도가 뒤집히지 않도록 그대로 전달함
+- **`none`으로 추론을 완전히 끌 수 있음.** 모델이 `none`을 목록에 넣지 않아도, 추론이 필수가 아니면
+  (`reasoning.mandatory`가 아니면) 선택지에 추가함
+- `reasoning.mandatory`인 모델은 `none`을 거부하므로 선택지에서 제외하고 안내함
+- 지원 단계를 알려주지 않는 모델에는 `none/low/medium/high` 표준 선택지를 제공함
+- 모델의 최소 단계가 `high` 이상이면 "추론에 시간이 오래 걸릴 수 있다"고 안내함
+- 실제 전송된 강도는 번역 로그에 남음
+
+#### 라우팅 변형과 제공자 지정
+
+| UI 항목 | 실제 요청 |
+| --- | --- |
+| 라우팅 방식 `속도 우선` | 모델 ID에 `:nitro` (= `provider.sort: throughput`) |
+| 라우팅 방식 `최저가` | 모델 ID에 `:floor` (= `provider.sort: price`) |
+| 라우팅 방식 `정확도 우선` | 모델 ID에 `:exacto` |
+| 제공자 선택 | `provider.order` (고른 순서대로 시도) |
+| `실패 시 다른 제공자 허용` 해제 | `provider.allow_fallbacks: false` |
+| `데이터 미수집 제공자만` | `provider.data_collection: "deny"` |
+
+- 모델 ID에 이미 `:free` 같은 변형이 붙어 있으면 접미사를 겹치지 않고 같은 의미의
+  `provider.sort`로 대체함 (`:exacto`는 sort로 표현할 수 없어 접미사만 유효)
+- `제공자 목록 불러오기`는 `GET /api/v1/models/{model}/endpoints`를 조회해 제공자별
+  가격·컨텍스트 길이·출력 한도·가동률·구조화 출력 지원 여부를 보여 줌
+- 실제 적용된 라우팅은 번역 로그에 남음
 
 ## 프로바이더 추가 방법
 
