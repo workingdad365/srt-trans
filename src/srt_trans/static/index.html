@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>srt-trans · SRT 자막 한국어 번역</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>srt-trans</h1>
+    <span class="subtitle">SRT 자막 한국어 번역기</span>
+    <span class="spacer"></span>
+    <span id="config-path" class="hint"></span>
+  </header>
+
+  <main>
+    <!-- 1. API 설정 -->
+    <section class="card">
+      <button class="card-head" data-toggle="api-body" aria-expanded="true">
+        <span class="chevron">▾</span> 1. API 설정
+      </button>
+      <div class="card-body" id="api-body">
+        <div class="row">
+          <label for="provider">LLM 프로바이더</label>
+          <select id="provider"></select>
+          <a id="api-key-link" class="link" href="#" target="_blank" rel="noopener">API 키 발급</a>
+        </div>
+
+        <div class="row">
+          <label for="api-key">API 키</label>
+          <input type="password" id="api-key" placeholder="API 키를 입력하세요" autocomplete="off" />
+          <button id="toggle-api-key" class="ghost" type="button" title="표시/숨김">👁</button>
+          <button id="save-api-key" class="primary" type="button">저장</button>
+          <span id="api-key-state" class="state"></span>
+        </div>
+
+        <div class="row">
+          <label for="model">모델</label>
+          <select id="model"><option value="">모델 목록을 불러오세요</option></select>
+          <button id="load-models" class="ghost" type="button">모델 목록 불러오기</button>
+        </div>
+
+        <div class="row">
+          <label for="tmdb-key">TMDB API 키</label>
+          <input type="password" id="tmdb-key" placeholder="선택 사항 · 작품 정보 검색용" autocomplete="off" />
+          <button id="toggle-tmdb-key" class="ghost" type="button" title="표시/숨김">👁</button>
+          <button id="save-tmdb-key" class="primary" type="button">저장</button>
+          <span id="tmdb-key-state" class="state"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 자막 파일 -->
+    <section class="card">
+      <button class="card-head" data-toggle="file-body" aria-expanded="true">
+        <span class="chevron">▾</span> 2. 자막 파일
+      </button>
+      <div class="card-body" id="file-body">
+        <div id="dropzone" class="dropzone">
+          <div class="dropzone-icon">📄</div>
+          <div><strong>SRT 파일을 여기에 끌어다 놓으세요</strong></div>
+          <div class="hint">또는 클릭해서 파일 선택</div>
+          <input type="file" id="file-input" accept=".srt" hidden />
+        </div>
+
+        <div class="row">
+          <label for="local-path">로컬 경로</label>
+          <input type="text" id="local-path" placeholder="예: G:\media\movie.en.srt" />
+          <button id="load-local" class="primary" type="button">경로에서 불러오기</button>
+        </div>
+        <p class="hint">
+          로컬 경로로 불러오면 번역 결과를 원본과 같은 폴더에 저장할 수 있습니다.
+          업로드한 파일은 다운로드로만 받을 수 있습니다.
+        </p>
+
+        <div id="file-info" class="file-info hidden">
+          <div><span class="tag">파일</span> <b id="fi-name"></b></div>
+          <div><span class="tag">자막</span> <span id="fi-count"></span>줄</div>
+          <div><span class="tag">경로</span> <span id="fi-path">업로드 파일(메모리)</span></div>
+          <div><span class="tag">출력</span> <span id="fi-output"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. 작품 정보 -->
+    <section class="card">
+      <button class="card-head" data-toggle="info-body" aria-expanded="true">
+        <span class="chevron">▾</span> 3. 작품 정보 및 번역 컨텍스트
+      </button>
+      <div class="card-body" id="info-body">
+        <div class="row">
+          <label for="title">작품 제목</label>
+          <input type="text" id="title" placeholder="파일명에서 자동 추출됩니다" />
+          <label class="check"><input type="checkbox" id="is-series" /> TV 시리즈</label>
+          <button id="tmdb-search" class="ghost" type="button">TMDB 검색</button>
+        </div>
+
+        <div id="tmdb-results" class="tmdb-results hidden"></div>
+        <div id="tmdb-selected" class="tmdb-selected hidden">
+          <div class="tmdb-selected-head">
+            <span><span class="tag">TMDB</span> <b id="tmdb-selected-title"></b></span>
+            <span>
+              <button id="tmdb-preview" class="ghost small" type="button">내용 보기</button>
+              <button id="tmdb-clear" class="ghost small" type="button">해제</button>
+            </span>
+          </div>
+          <p class="hint" id="tmdb-selected-note"></p>
+          <pre id="tmdb-preview-body" class="tmdb-preview hidden"></pre>
+        </div>
+
+        <div class="field">
+          <label for="story-context">상세 줄거리 및 등장인물 정보</label>
+          <p class="hint">
+            줄거리와 등장인물(이름·관계·나이·말투·존댓말/반말 관계 등)을 적어 두면
+            번역 시 호칭·어투·고유명사 표기를 일관되게 유지하는 근거로 사용됩니다.<br />
+            <b>이 칸을 채우면 TMDB 정보는 사용하지 않습니다.</b>
+            비워 두면 위에서 선택한 TMDB 작품의 줄거리·출연진 정보가 대신 사용됩니다.
+          </p>
+          <textarea id="story-context" rows="12" placeholder="예)
+[줄거리]
+1999년, 프로그래머 토마스 앤더슨은 ...
+
+[등장인물]
+- 네오(토마스 앤더슨): 주인공. 모피어스에게는 존댓말, 트리니티와는 반말.
+- 모피어스: 네오의 스승. 40대. 항상 격식 있는 말투.
+- 트리니티: 네오와 동년배. 간결하고 단정적인 어투."></textarea>
+        </div>
+
+        <div class="field">
+          <label for="extra-instruction">추가 번역 지시문 (선택)</label>
+          <textarea id="extra-instruction" rows="3" placeholder="예) 군사 용어는 국방부 표준 용어를 사용할 것"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. 고급 설정 -->
+    <section class="card">
+      <button class="card-head" data-toggle="adv-body" aria-expanded="false">
+        <span class="chevron">▸</span> 4. 고급 설정
+      </button>
+      <div class="card-body hidden" id="adv-body">
+        <div class="grid">
+          <div class="field-inline">
+            <label for="batch-size">배치 크기</label>
+            <input type="number" id="batch-size" min="1" max="2000" value="300" />
+          </div>
+          <div class="field-inline">
+            <label for="language-code">출력 언어 코드</label>
+            <input type="text" id="language-code" value="ko" />
+          </div>
+          <div class="field-inline">
+            <label for="start-index">시작 자막 번호</label>
+            <input type="number" id="start-index" min="1" value="1" />
+          </div>
+          <div class="field-inline">
+            <label for="temperature">Temperature</label>
+            <input type="number" id="temperature" min="0" max="2" step="0.05" placeholder="기본값" />
+          </div>
+          <div class="field-inline">
+            <label for="top-p">Top P</label>
+            <input type="number" id="top-p" min="0" max="1" step="0.05" placeholder="기본값" />
+          </div>
+          <div class="field-inline">
+            <label for="top-k">Top K</label>
+            <input type="number" id="top-k" min="0" step="1" placeholder="기본값" />
+          </div>
+          <div class="field-inline">
+            <label for="thinking-budget">Thinking 예산</label>
+            <input type="number" id="thinking-budget" min="0" max="24576" value="2048" />
+          </div>
+        </div>
+        <div class="row wrap">
+          <label class="check"><input type="checkbox" id="thinking" checked /> Thinking 사용</label>
+          <label class="check"><input type="checkbox" id="streaming" checked /> 스트리밍 응답</label>
+          <label class="check"><input type="checkbox" id="save-to-source" checked /> 원본 폴더에 저장</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. 실행 -->
+    <section class="card">
+      <div class="card-head static">5. 번역 실행</div>
+      <div class="card-body">
+        <div class="actions">
+          <button id="start" class="run" type="button">번역 시작</button>
+          <button id="cancel" class="danger hidden" type="button">취소</button>
+          <button id="download" class="primary hidden" type="button">번역 결과 다운로드</button>
+        </div>
+
+        <div class="progress-wrap">
+          <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+          <div id="progress-text" class="progress-text">대기 중</div>
+        </div>
+
+        <div class="console-head">
+          <span>진행 로그</span>
+          <button id="clear-log" class="ghost small" type="button">지우기</button>
+        </div>
+        <div id="console" class="console"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
