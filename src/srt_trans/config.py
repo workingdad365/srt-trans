@@ -42,6 +42,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 추론을 끌 수 없는 모델에서는 UI가 자동으로 그다음 낮은 단계를 고름
     "reasoning_effort": "none",
     "streaming": True,
+    # 요청 하나가 끝나기를 기다리는 최대 시간(초)
+    "timeout": 600,
     # 번역 결과에서 종결 마침표를 제거함 (모델이 놓친 경우 대비)
     "strip_trailing_period": True,
     # OpenRouter 라우팅 설정 { route_variant, providers, allow_fallbacks, deny_data_collection }

@@ -174,6 +174,7 @@ function applyConfig(config) {
   $("language-code").value = config.language_code || "ko";
   $("thinking").checked = config.thinking !== false;
   $("streaming").checked = config.streaming !== false;
+  $("timeout").value = config.timeout ?? 600;
   $("strip-period").checked = config.strip_trailing_period !== false;
   $("thinking-budget").value = config.thinking_budget ?? 2048;
   if (config.temperature !== null && config.temperature !== undefined) {
@@ -898,6 +899,7 @@ function collectRequest() {
     thinking_budget: Number($("thinking-budget").value || 2048),
     reasoning_effort: $("reasoning-effort").value || null,
     streaming: $("streaming").checked,
+    timeout: Number($("timeout").value || 600),
     strip_trailing_period: $("strip-period").checked,
     language_code: $("language-code").value.trim() || "ko",
     start_index: startIndex,
@@ -919,6 +921,7 @@ async function persistSettings(request) {
       thinking_budget: request.thinking_budget,
       reasoning_effort: request.reasoning_effort,
       streaming: request.streaming,
+      timeout: request.timeout,
       strip_trailing_period: request.strip_trailing_period,
       language_code: request.language_code,
       extra_instruction: request.extra_instruction,

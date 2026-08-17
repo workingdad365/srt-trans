@@ -204,6 +204,11 @@
             <label for="top-k">Top K</label>
             <input type="number" id="top-k" min="0" step="1" placeholder="기본값" />
           </div>
+          <div class="field-inline">
+            <label for="timeout">응답 대기 시간(초)</label>
+            <input type="number" id="timeout" min="10" max="3600" step="10" value="600" />
+            <span class="field-hint">이 시간을 넘기면 재시도</span>
+          </div>
           <div class="field-inline" id="wrap-thinking-budget">
             <label for="thinking-budget">Thinking 예산</label>
             <input type="number" id="thinking-budget" min="0" max="24576" value="2048" />

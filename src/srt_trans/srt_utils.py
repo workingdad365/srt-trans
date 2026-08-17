@@ -98,20 +98,24 @@ def build_output_name(source_name: str, language_code: str = "ko") -> str:
 
 # 닫는 서식 태그: </i>, </b>, </font>, ASS/SSA 오버라이드 {\an8} 등
 _CLOSING_MARKUP_RE = re.compile(r"(?:</[a-zA-Z][^>]*>|\{[^}]*\})\s*$")
+_KOREAN_SENTENCE_PERIOD_RE = re.compile(r"(?<=[가-힣])\.(?=\s+[가-힣])")
 
 
 def strip_trailing_period(text: str) -> str:
-    """자막 한 항목의 종결 마침표를 제거함.
+    """자막 한 항목의 한글 문장 사이 마침표를 쉼표로 바꾸고 종결 마침표를 제거함.
 
     닫는 서식 태그 안쪽에 있는 마침표도 제거함.
     말줄임표(...), 물음표, 느낌표는 건드리지 않음.
 
     예) "<i>그는 돌아오지 않아.</i>" -> "<i>그는 돌아오지 않아</i>"
         "이미 떠났어."               -> "이미 떠났어"
+        "엘비스. 그 양동이가 필요해" -> "엘비스, 그 양동이가 필요해"
         "잠깐만..."                  -> "잠깐만..."  (변경 없음)
     """
     if not text:
         return text
+
+    text = _KOREAN_SENTENCE_PERIOD_RE.sub(",", text)
 
     head = text.rstrip()
     trailing = text[len(head) :]

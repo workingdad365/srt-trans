@@ -117,7 +117,11 @@ class GeminiProvider(LLMProvider):
     @property
     def client(self) -> genai.Client:
         if self._client is None:
-            self._client = genai.Client(api_key=self.api_key)
+            http_options = None
+            if self.params.timeout:
+                # google-genai의 timeout 단위는 밀리초임
+                http_options = types.HttpOptions(timeout=int(self.params.timeout * 1000))
+            self._client = genai.Client(api_key=self.api_key, http_options=http_options)
         return self._client
 
     def _config(self, system_instruction: str) -> types.GenerateContentConfig:

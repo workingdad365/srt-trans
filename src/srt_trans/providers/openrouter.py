@@ -29,6 +29,7 @@ from .base import (
     Turn,
 )
 from .openai_provider import (
+    DEFAULT_TIMEOUT,
     RESULT_KEY,
     _check_finish_reason,
     _response_format,
@@ -191,7 +192,7 @@ class OpenRouterProvider(LLMProvider):
                 api_key=self.api_key,
                 base_url=BASE_URL,
                 default_headers=_APP_HEADERS,
-                timeout=600.0,
+                timeout=self.params.timeout or DEFAULT_TIMEOUT,
                 max_retries=2,
             )
         return self._client

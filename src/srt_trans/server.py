@@ -171,6 +171,7 @@ class ConfigUpdate(BaseModel):
     thinking_budget: int | None = Field(default=None, ge=0, le=24576)
     reasoning_effort: str | None = None
     streaming: bool | None = None
+    timeout: float | None = Field(default=None, ge=10.0, le=3600.0)
     strip_trailing_period: bool | None = None
     language_code: str | None = None
     extra_instruction: str | None = None
@@ -250,6 +251,8 @@ class TranslateRequest(BaseModel):
     # OpenAI 추론 모델용 추론 강도 (Gemini에서는 무시됨)
     reasoning_effort: str | None = None
     streaming: bool = True
+    # 요청 하나가 끝나기를 기다리는 최대 시간(초)
+    timeout: float = Field(default=600.0, ge=10.0, le=3600.0)
     language_code: str = "ko"
     start_index: int = Field(default=0, ge=0)
     save_to_source_dir: bool = True
@@ -639,6 +642,7 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
             thinking_budget=payload.thinking_budget,
             reasoning_effort=payload.reasoning_effort,
             streaming=payload.streaming,
+            timeout=payload.timeout,
             extra=payload.routing.to_extra(),
         )
 

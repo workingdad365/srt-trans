@@ -59,9 +59,11 @@ _PERIOD_RULE = (
     "3. Lines in italics (a voice over the phone, a radio, narration, song lyrics) are where this "
     "rule is missed most often. Check every line containing a tag one more time before answering.\n"
     "4. Do NOT remove '?', '!', '...' or '…'. Only the plain period is removed.\n"
-    "5. If an entry holds several sentences, keep the periods between them and remove only the "
-    "very last one.\n"
-    "   - \"안녕하세요. 반갑습니다.\"  ->  \"안녕하세요. 반갑습니다\"\n"
+    "5. If an entry holds several Korean sentences, replace each plain period between them with "
+    "a comma and remove only the final period. Do not leave plain sentence-separating periods "
+    "anywhere in the translated subtitle entry.\n"
+    "   - \"Elvis. I need that bucket now.\" -> \"엘비스, 그 양동이 지금 필요해\"\n"
+    "   - \"안녕하세요. 반갑습니다.\"       -> \"안녕하세요, 반갑습니다\"\n"
     "6. Never touch periods that belong inside an abbreviation or a number (Mr., 3.5, U.S.).\n"
 )
 

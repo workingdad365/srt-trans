@@ -32,6 +32,8 @@ from .base import (
 
 # 번역 결과를 담는 최상위 키 (엔진은 dict 응답에서 배열을 자동으로 꺼냄)
 RESULT_KEY = "translations"
+# 요청 타임아웃 기본값(초). 배치가 크면 응답이 오래 걸릴 수 있어 넉넉히 잡음
+DEFAULT_TIMEOUT = 600.0
 
 _GPT_VERSION_RE = re.compile(r"^gpt-(\d+)(?:\.(\d+))?", re.IGNORECASE)
 _O_SERIES_RE = re.compile(r"^o(\d+)(?:-|$)", re.IGNORECASE)
@@ -176,7 +178,11 @@ class OpenAIProvider(LLMProvider):
     @property
     def client(self) -> openai.OpenAI:
         if self._client is None:
-            self._client = openai.OpenAI(api_key=self.api_key, timeout=600.0, max_retries=2)
+            self._client = openai.OpenAI(
+                api_key=self.api_key,
+                timeout=self.params.timeout or DEFAULT_TIMEOUT,
+                max_retries=2,
+            )
         return self._client
 
     # --- 조회 계열 -------------------------------------------------------

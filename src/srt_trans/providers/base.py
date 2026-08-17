@@ -57,6 +57,8 @@ class GenerationParams:
     thinking_budget: int = 2048
     reasoning_effort: str | None = None
     streaming: bool = True
+    # 요청 하나가 끝나기를 기다리는 최대 시간(초). None이면 SDK 기본값
+    timeout: float | None = None
     # 특정 프로바이더에만 해당하는 옵션(예: OpenRouter의 라우팅 설정).
     # 해당 프로바이더만 읽고 나머지는 무시함
     extra: dict[str, Any] = field(default_factory=dict)

@@ -97,9 +97,15 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
+  /* 같은 행의 셀이 가장 높은 셀에 맞춰 늘어나지 않도록 함 */
+  align-items: start;
 }
 .field-inline { display: flex; flex-direction: column; gap: 4px; }
 .field-inline label { color: var(--muted); font-size: 13px; }
+.field-inline > input,
+.field-inline > select {
+  width: 100%;
+}
 .field-hint { color: #6b7285; font-size: 11.5px; }
 
 .tips {
@@ -115,7 +121,7 @@ main {
 .tips b { color: var(--text); }
 .tips i { color: var(--yellow); font-style: normal; }
 
-input[type="text"], input[type="password"], input[type="number"], select, textarea {
+input[type="text"], input[type="password"], input[type="number"], select, textarea, .input-base {
   background: #14161b;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -126,7 +132,9 @@ input[type="text"], input[type="password"], input[type="number"], select, textar
   outline: none;
   min-width: 0;
 }
-input[type="text"], input[type="password"], select { flex: 1; }
+/* 남은 공간 채우기는 가로 배치(.row)에서만 적용함.
+   세로 배치(.field-inline)에 걸리면 입력란 높이가 늘어남 */
+.row input[type="text"], .row input[type="password"], .row select { flex: 1; }
 textarea { resize: vertical; line-height: 1.6; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 
