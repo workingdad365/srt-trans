@@ -17,7 +17,7 @@ import uvicorn
 from . import __version__
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8420
+DEFAULT_PORT = 18420
 # Ctrl+C 후 열린 연결을 정리하며 기다리는 최대 시간(초)
 GRACEFUL_SHUTDOWN_SECONDS = 3
 

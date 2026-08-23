@@ -63,14 +63,22 @@ def _quiet_shutdown_noise(loop: asyncio.AbstractEventLoop, context: dict[str, An
     """브라우저를 닫거나 서버를 종료할 때 나는 무해한 예외를 감춤.
 
     - WinError 10054: ProactorEventLoop가 이미 끊긴 소켓을 shutdown 할 때 발생
+    - WinError 10022: ProactorEventLoop가 닫히는 소켓을 다시 shutdown 할 때 발생
     - _start_serving 콜백의 AssertionError: 종료 중 남아 있던 accept가 완료되면서
       이미 닫힌 서버에 transport를 붙이려 할 때 발생하는 asyncio 내부 레이스
     동작에는 영향이 없고 콘솔만 지저분해짐.
     """
     exception = context.get("exception")
+    handle_repr = repr(context.get("handle"))
     if isinstance(exception, ConnectionResetError | ConnectionAbortedError):
         return
-    if isinstance(exception, AssertionError) and "_start_serving" in repr(context.get("handle")):
+    if (
+        isinstance(exception, OSError)
+        and exception.winerror == 10022
+        and "_call_connection_lost" in handle_repr
+    ):
+        return
+    if isinstance(exception, AssertionError) and "_start_serving" in handle_repr:
         return
     loop.default_exception_handler(context)
 

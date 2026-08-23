@@ -63,7 +63,7 @@ uv run srt-trans
 ## 사용법
 
 ```
-srt-trans                      # http://localhost:8420 에서 웹 UI 실행
+srt-trans                      # http://localhost:18420 에서 웹 UI 실행
 srt-trans --port 9000          # 포트 지정
 srt-trans --no-browser         # 브라우저 자동 실행 안 함
 srt-trans --host 0.0.0.0       # 외부 접속 허용 (주의: API 키가 저장된 서버임)
