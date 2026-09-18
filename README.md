@@ -5,6 +5,10 @@ SRT 자막 파일을 한국어 자막으로 번역하는 웹 기반 도구.
 `gemini-srt-translator` 와 `Gemini-SRT-translator-GUI` 의 번역 로직/프롬프트를 계승하되,
 다중 LLM 프로바이더를 염두에 둔 구조로 재작성함. 현재 Google Gemini, OpenAI, OpenRouter를 지원함.
 
+
+
+![](screenshot.webp)
+
 ## 특징
 
 - 웹 UI (Streamlit 미사용, FastAPI + 순수 HTML/JS)

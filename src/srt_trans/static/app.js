@@ -192,8 +192,7 @@ function updateKeyState() {
   const keysSet = (state.config && state.config.api_keys_set) || {};
   const element = $("api-key-state");
   if (keysSet[providerId]) {
-    const masked = (state.config.api_keys || {})[providerId] || "";
-    element.textContent = `저장됨 ${masked}`;
+    element.textContent = "저장됨";
     element.className = "state ok";
   } else {
     element.textContent = "미설정";
@@ -202,7 +201,7 @@ function updateKeyState() {
 
   const tmdbState = $("tmdb-key-state");
   if (state.config && state.config.tmdb_api_key_set) {
-    tmdbState.textContent = `저장됨 ${state.config.tmdb_api_key}`;
+    tmdbState.textContent = "저장됨";
     tmdbState.className = "state ok";
   } else {
     tmdbState.textContent = "미설정";
