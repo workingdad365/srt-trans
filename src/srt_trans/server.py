@@ -256,7 +256,7 @@ class TranslateRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=0)
     thinking: bool = True
     thinking_budget: int = Field(default=2048, ge=0, le=24576)
-    # OpenAI 추론 모델용 추론 강도 (Gemini에서는 무시됨)
+    # OpenAI/OpenRouter 및 Anthropic 적응형 사고 모델용 추론 강도
     reasoning_effort: str | None = None
     streaming: bool = True
     # 요청 하나가 끝나기를 기다리는 최대 시간(초)
@@ -675,9 +675,8 @@ def _run_translation(job: Job, *, source: SourceFile, payload: TranslateRequest)
         )
         _log_routing(job, payload, provider)
         context, context_source = payload.resolve_context()
-        # 사고 지시문은 프롬프트로 사고를 제어하는 방식(Gemini)에서만 넣음.
-        # OpenAI 추론 모델은 reasoning_effort 파라미터가 그 역할을 하므로 제외함.
-        prompt_controls_thinking = capabilities.thinking_control in ("budget", "on_off")
+        # 사고 지시문은 Gemini에서만 사용함. 다른 프로바이더는 API 파라미터로 제어함
+        prompt_controls_thinking = payload.provider == "gemini" and capabilities.thinking
         instruction = build_system_instruction(
             story_context=context,
             title=payload.title,

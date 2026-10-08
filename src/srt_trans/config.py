@@ -35,9 +35,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "top_p": None,
     "top_k": None,
     "thinking": True,
-    # Gemini 계열: 사고 예산(토큰 수)
+    # Gemini 및 Anthropic 수동 사고 모델: 사고 예산(토큰 수)
     "thinking_budget": 2048,
-    # OpenAI/OpenRouter 추론 모델 계열: 추론 강도 (모델별 허용값이 다름).
+    # OpenAI/OpenRouter/Anthropic 적응형 사고 모델: 추론 강도 (모델별 허용값이 다름).
     # 자막 번역은 깊은 추론이 필요하지 않아 가장 낮은 단계를 기본으로 둠.
     # 추론을 끌 수 없는 모델에서는 UI가 자동으로 그다음 낮은 단계를 고름
     "reasoning_effort": "none",

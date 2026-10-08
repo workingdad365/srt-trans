@@ -32,14 +32,6 @@ MAX_BATCH_RETRIES = 5
 RATE_LIMIT_WAIT_SECONDS = 20
 # 토큰 한도 때문에 배치를 줄일 때의 최소값(물리적 제약이라 낮게 잡음)
 MIN_BATCH_SIZE = 10
-# 응답 부족으로 배치를 줄일 때의 최소값.
-# 배치가 작아지면 한 번에 주는 문맥도 줄어 번역 품질이 떨어지므로 너무 낮추지 않음
-MIN_ADAPTIVE_BATCH_SIZE = 50
-# 요청 대비 이 비율 미만으로 반환되면 '모자란 응답'으로 셈함.
-# 조금 모자란 정도는 남은 줄을 다음 배치에서 이어 처리하므로 손실이 없음
-SHRINK_THRESHOLD = 0.7
-# 모자란 응답이 이만큼 연속되어야 배치를 줄임(1회는 일시적 오류로 보고 넘어감)
-SHRINK_AFTER = 2
 # 완전한 응답이 이만큼 연속되면 배치를 다시 늘림
 GROW_AFTER = 2
 
@@ -129,7 +121,6 @@ class TranslationEngine:
         self._translated: list[Subtitle] = []
         self._completed = 0
         # 배치 크기 조절용 연속 카운터
-        self._short_streak = 0
         self._full_streak = 0
 
     # --- 공개 API --------------------------------------------------------
@@ -260,8 +251,8 @@ class TranslationEngine:
         Returns:
             (다음 배치에 넘길 대화 이력, 실제로 반영한 줄 수)
 
-        모델이 요청한 줄 수보다 적게 돌려주는 일이 흔하므로, 앞에서부터 이어지는
-        정상 구간까지는 그대로 반영하고 나머지는 다음 배치로 넘김.
+        모든 항목을 검증한 배치만 한 번에 반영함.
+        불완전한 응답은 폐기하고 같은 시작 위치에서 더 작은 배치로 재요청함.
         """
         user_text = json.dumps(batch, ensure_ascii=False)
         expected = len(batch)
@@ -319,88 +310,60 @@ class TranslationEngine:
                 self._log("info", "같은 배치를 다시 시도합니다.")
                 continue
 
-            final = self._safe_parse(response_text)
+            final = self._safe_parse(response_text, repair=False)
+            accepted = 0
             if final is None:
-                self._log("warning", "응답을 JSON으로 해석하지 못했습니다. 다시 시도합니다.")
-                self._progress(cursor, None)
-                continue
-
-            try:
-                accepted = self._apply_lines(final, batch, translated)
-            except TranslationCancelled:
-                raise
-            except Exception as exc:  # noqa: BLE001 - 이상한 응답 하나로 전체가 죽지 않게 함
-                self._log("warning", f"응답을 처리하는 중 문제가 발생했습니다: {exc}")
-                self._log("info", "같은 배치를 다시 시도합니다.")
-                self._progress(cursor, None)
-                continue
+                self._log("warning", "완성된 JSON 응답이 아닙니다. 이 배치의 번역은 반영하지 않습니다.")
+            else:
+                try:
+                    accepted = self._apply_lines(final, batch, translated)
+                except TranslationCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - 검증 실패 시 원본을 유지함
+                    self._log("warning", f"응답을 처리하는 중 문제가 발생했습니다: {exc}")
 
             if accepted == 0:
-                self._log("warning", "쓸 수 있는 번역이 없어 같은 배치를 다시 시도합니다.")
                 self._progress(cursor, None)
-                continue
-
-            if accepted < expected:
+                self._full_streak = 0
+                if expected > 1:
+                    new_size = max(1, expected // 2)
+                    self.batch_size = min(self.batch_size, new_size)
+                    batch = batch[:new_size]
+                    user_text = json.dumps(batch, ensure_ascii=False)
+                    expected = len(batch)
+                    # 축소된 요청은 별도 배치이며, 단일 항목에서도 실패하면 횟수 제한으로 중단함
+                    attempt = 0
                 self._log(
                     "warning",
-                    f"{expected}줄을 요청했으나 {accepted}줄만 정상 반환되었습니다. "
-                    f"{cursor + accepted + 1}번부터 이어서 번역합니다.",
+                    f"응답 전체를 폐기했습니다. {cursor + 1}번부터 {expected}줄을 다시 번역합니다.",
                 )
-            self._adjust_batch_size(accepted, expected)
+                continue
 
-            # 다음 배치 문맥에는 실제로 반영된 구간만 넘김
+            self._grow_batch_size(expected)
+
+            # 검증을 통과한 요청과 응답만 다음 배치의 문맥으로 넘김
             return (
                 [
-                    Turn(role="user", text=json.dumps(batch[:accepted], ensure_ascii=False)),
-                    Turn(role="model", text=json.dumps(final[:accepted], ensure_ascii=False)),
+                    Turn(role="user", text=user_text),
+                    Turn(role="model", text=json.dumps(final, ensure_ascii=False)),
                 ],
                 accepted,
             )
 
-    def _adjust_batch_size(self, accepted: int, expected: int) -> None:
-        """응답 상태에 따라 배치 크기를 조절함.
-
-        - 한 번 모자란 정도는 일시적인 오류로 보고 크기를 유지함
-        - 연속으로 모자라면 절반으로 줄임(한 번에 급락시키지 않음)
-        - 다시 안정되면 원래 크기까지 서서히 되돌림
-        """
-        # 마지막 배치는 남은 자막 수만큼이라 '모자란 응답'으로 볼 수 없음
+    def _grow_batch_size(self, expected: int) -> None:
+        """완전한 배치가 연속해서 반환되면 원래 요청 크기까지 서서히 복원함."""
         if expected < self.batch_size:
             return
-
-        if accepted >= expected:
-            self._short_streak = 0
-            self._full_streak += 1
-            if self._full_streak >= GROW_AFTER and self.batch_size < self.options.batch_size:
-                new_size = min(self.options.batch_size, max(self.batch_size + 1, int(self.batch_size * 1.5)))
-                self._log("info", f"응답이 안정되어 배치 크기를 {self.batch_size}에서 {new_size}로 되돌립니다.")
-                self.batch_size = new_size
-                self._full_streak = 0
-            return
-
-        self._full_streak = 0
-        if accepted >= expected * SHRINK_THRESHOLD:
-            # 조금 모자란 정도는 이어 처리로 충분하므로 크기를 건드리지 않음
-            return
-
-        if self.batch_size <= MIN_ADAPTIVE_BATCH_SIZE:
-            # 이미 최소 크기라 더 줄일 수 없음(같은 안내를 반복하지 않음)
-            return
-
-        self._short_streak += 1
-        if self._short_streak < SHRINK_AFTER:
-            self._log("info", "일시적인 오류일 수 있어 배치 크기를 유지한 채 계속합니다.")
-            return
-
-        new_size = max(MIN_ADAPTIVE_BATCH_SIZE, self.batch_size // 2)
-        if new_size < self.batch_size:
-            self._log("info", f"응답이 계속 모자라 배치 크기를 {self.batch_size}에서 {new_size}로 줄입니다.")
+        self._full_streak += 1
+        if self._full_streak >= GROW_AFTER and self.batch_size < self.options.batch_size:
+            new_size = min(self.options.batch_size, max(self.batch_size + 1, int(self.batch_size * 1.5)))
+            self._log("info", f"응답이 안정되어 배치 크기를 {self.batch_size}에서 {new_size}로 되돌립니다.")
             self.batch_size = new_size
-        self._short_streak = 0
+            self._full_streak = 0
 
     @staticmethod
-    def _safe_parse(text: str) -> list[dict[str, Any]] | None:
-        """부분적으로 수신된 JSON도 최대한 복구해 파싱함.
+    def _safe_parse(text: str, *, repair: bool = True) -> list[dict[str, Any]] | None:
+        """진행률 계산에만 JSON 복구를 허용하며 최종 결과는 완성된 JSON으로 파싱함.
 
         Gemini는 최상위 배열을, OpenAI 구조화 출력은 최상위 객체를 반환하므로
         객체로 감싸인 경우 그 안의 배열을 꺼내 동일하게 취급함.
@@ -408,7 +371,7 @@ class TranslationEngine:
         if not text.strip():
             return None
         try:
-            data = json_repair.loads(text)
+            data = json_repair.loads(text) if repair else json.loads(text)
         except Exception:  # noqa: BLE001 - 복구 실패는 정상 흐름
             return None
 
@@ -418,9 +381,9 @@ class TranslationEngine:
                     data = value
                     break
 
-        if not isinstance(data, list):
+        if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
             return None
-        return [item for item in data if isinstance(item, dict)]
+        return data
 
     def _apply_lines(
         self,
@@ -428,26 +391,23 @@ class TranslationEngine:
         batch: list[dict[str, str]],
         translated: list[Subtitle],
     ) -> int:
-        """번역 결과를 자막 목록에 반영함.
+        """개수·순서·본문을 모두 검증한 뒤 배치 전체를 반영함. 실패 시 원본을 유지함."""
+        if len(lines) != len(batch):
+            self._log(
+                "warning",
+                f"요청한 {len(batch)}줄과 응답 {len(lines)}줄의 개수가 다릅니다. "
+                "자막 병합·누락 가능성이 있어 이 배치의 번역은 반영하지 않습니다.",
+            )
+            return 0
 
-        배치 순서와 어긋나거나 잘못된 항목이 나오면 거기서 멈추고, 그 앞까지
-        정상적으로 반영한 줄 수를 반환함. 나머지는 다음 배치에서 다시 요청함.
-        """
-        accepted = 0
-
-        for position, line in enumerate(lines):
-            if position >= len(batch):
-                self._log("warning", "요청한 줄 수보다 많은 응답이 와서 초과분은 버립니다.")
-                break
-
-            expected_index = batch[position]["index"]
+        prepared: list[tuple[int, str]] = []
+        period_fixes = 0
+        for expected, line in zip(batch, lines):
+            self._raise_if_cancelled()
+            expected_index = expected["index"]
             line_number = int(expected_index) + 1
             index = line.get("index")
             content = line.get("content")
-
-            if index is None or content is None:
-                self._log("warning", f"{line_number}번 자막 응답에 index/content가 없습니다.")
-                break
 
             if str(index) != expected_index:
                 self._log(
@@ -455,28 +415,29 @@ class TranslationEngine:
                     f"자막 번호 순서가 어긋났습니다. 기대 {line_number}번, "
                     f"수신 {_describe_index(index)}.",
                 )
-                break
-
-            content = str(content)
-            if not content.strip() and batch[position]["content"].strip():
+                return 0
+            if not isinstance(content, str):
+                self._log("warning", f"{line_number}번 자막의 content가 문자열이 아닙니다.")
+                return 0
+            if not content.strip() and expected["content"].strip():
                 self._log("warning", f"{line_number}번 자막이 빈 값으로 반환되었습니다.")
-                break
+                return 0
 
-            # 모델이 종결 마침표를 남긴 경우 여기서 정리함
             if self.options.strip_trailing_period:
                 stripped = strip_trailing_period(content)
                 if stripped != content:
-                    self._period_fixes += 1
+                    period_fixes += 1
                     content = stripped
-
-            target = int(expected_index)
             if dominant_direction(content) == "rtl":
-                translated[target].content = f"‫{content}‬"
-            else:
-                translated[target].content = content
-            accepted += 1
+                content = f"‫{content}‬"
+            prepared.append((int(expected_index), content))
 
-        return accepted
+        # 검증·후처리 중 예외나 취소가 발생해도 현재 배치의 일부가 남지 않도록 함
+        self._raise_if_cancelled()
+        for target, content in prepared:
+            translated[target].content = content
+        self._period_fixes += period_fixes
+        return len(prepared)
 
     # --- 보조 ------------------------------------------------------------
 

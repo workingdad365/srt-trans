@@ -3,7 +3,7 @@
 SRT 자막 파일을 한국어 자막으로 번역하는 웹 기반 도구.
 
 `gemini-srt-translator` 와 `Gemini-SRT-translator-GUI` 의 번역 로직/프롬프트를 계승하되,
-다중 LLM 프로바이더를 염두에 둔 구조로 재작성함. 현재 Google Gemini, OpenAI, OpenRouter를 지원함.
+다중 LLM 프로바이더를 염두에 둔 구조로 재작성함. 현재 Google Gemini, OpenAI, Anthropic, OpenRouter를 지원함.
 
 
 
@@ -82,6 +82,14 @@ srt-trans --host 0.0.0.0       # 외부 접속 허용 (주의: API 키가 저장
 4. **고급 설정** (선택) — 배치 크기, 추론 강도, 응답 대기 시간, temperature 등
 5. **번역 실행** — 진행률과 로그를 실시간으로 확인, 완료 후 저장 경로 확인 또는 다운로드
 
+### 배치 정합성 검사
+
+- 요청과 응답의 항목 개수·번호·순서 및 본문 문자열을 모두 검사한 뒤 배치 전체를 반영함
+- 누락·초과·번호 불일치·빈 번역이 있으면 앞부분도 저장하지 않음. 모델이 자막을 합친 뒤 번호를 다시 매기면 앞부분도 다른 원문에 대응할 수 있기 때문임
+- 불완전한 응답은 대화 이력에서도 제외하고, 같은 시작 위치에서 배치를 절반으로 줄여 다시 요청함. 필요하면 1개까지 줄이며, 같은 크기의 요청이 5회 실패하면 중단함
+- JSON 복구는 스트리밍 진행률 표시에서만 사용함. 최종 번역은 완성된 JSON이어야 하며, 잘린 문자열을 복구해서 저장하지 않음
+- 구조가 맞더라도 의미상 오역은 자동 검출하지 못함. 기존 결과에서 내용이 밀렸다면 번호·타임코드 수정만으로 복구할 수 없으며 원본부터 재번역해야 함
+
 ### 번역 컨텍스트 우선순위
 
 1. **상세 줄거리 및 등장인물 정보**를 직접 입력한 경우 → 그 내용만 사용함 (TMDB 정보는 무시)
@@ -156,6 +164,9 @@ API 키가 평문으로 저장되므로 파일 권한에 유의할 것.
 | Google Gemini | `thinking` + `thinking_budget`(2.5 이상) | 지원 | 지원 | 지원 |
 | OpenAI (GPT-5 이상 / o 시리즈) | `reasoning_effort` | **미지원**(1 고정) | 미지원 | 미지원 |
 | OpenAI (GPT-4o 등 이전 모델) | 없음 | 지원 | 미지원 | 미지원 |
+| Anthropic (Claude 4.6 이상 / Mythos Preview) | `reasoning_effort` | 전송하지 않음 | 전송하지 않음 | 지원 |
+| Anthropic (Claude 3.7 / 4~4.5) | `thinking` + `thinking_budget` | 사고를 끈 경우 지원 | 사고를 끈 경우 지원 | 지원 |
+| Anthropic (이전 모델) | 없음 | 지원 | 지원 | 지원 |
 | OpenRouter | 모델별 (API가 알려주는 값 사용) | 모델별 | 모델별 | 미지원 |
 
 모델을 고르면 UI가 해당 모델이 지원하는 입력란만 활성화하고, 지원하지 않는 값이 요청에 섞여 있으면
@@ -172,8 +183,23 @@ API 키가 평문으로 저장되므로 파일 권한에 유의할 것.
   o 시리즈는 `low/medium/high`. 최소 단계 명칭(`minimal`/`none`) 차이는 자동으로 맞춰 줌
 - **역할 이름**: OpenAI 추론 모델은 `system` 대신 `developer` 역할을 사용함
 - **안전 설정**: `safety_settings`는 Gemini 전용이며 OpenAI에는 전송하지 않음
-- **배치 크기 자동 축소**: 토큰 계산 API가 있는 Gemini에서만 동작함. OpenAI는 응답이 길이 한도에 걸리면
-  (`finish_reason=length`) 오류로 알리고 배치 크기를 줄이도록 안내함
+- **배치 크기 자동 축소**: Gemini와 Anthropic은 토큰 계산으로 사전에 크기를 줄임. 모든 프로바이더는
+  응답 개수·번호·본문의 정합성 검사에 실패하면 해당 응답을 폐기하고 더 작은 배치로 재요청함.
+  OpenAI의 출력 길이 한도(`finish_reason=length`) 오류는 배치 크기를 줄이도록 안내함
+
+### Anthropic
+
+- `Anthropic` 선택 → [API 키 발급](https://platform.claude.com/settings/keys) 및 저장 → 모델 목록 조회 후 모델 선택
+- 공식 `anthropic` SDK 1.12.1 이상과 Messages API를 사용함. 기본 추천 모델은 `claude-sonnet-4-6`이며 모델 목록은 API에서 페이지 전체를 조회함
+- Claude 4.6 이상은 적응형 사고와 `output_config.effort`를 사용함. `none`은 사고 해제로 변환하며, 사고 해제 불가 모델은 선택지에서 제외함. Sonnet 5.5의 사고 해제는 `between_tools`를 사용함
+- Claude 3.7 및 4~4.5는 수동 사고 예산을 사용함. 예산을 최소 1,024토큰으로 보정하고 최종 번역문에 필요한 출력 여유를 남김
+- 수동 사고를 켜면 temperature/top_p/top_k를 전송하지 않음. 적응형 사고 모델은 샘플링 입력란을 비활성화함
+- 샘플링 사용 시 temperature를 0~1로 보정함. temperature와 top_p를 함께 지정하면 temperature를 우선함
+- Claude 4.5 이상 및 Mythos Preview는 `output_config.format`의 JSON 스키마로 `{"translations": [...]}`를 생성함. 이전 모델은 동일한 JSON 형식을 프롬프트로 지시함
+- 스트리밍/비스트리밍 모두 사고 내용과 번역문을 분리함. 서명이 없는 사고 요약은 대화 이력으로 재전송하지 않음
+- 출력 한도는 사고 지원 모델 32,768토큰, 이전 모델 4,096토큰으로 요청함. 수동 사고 예산을 제외한 한도로 배치 크기를 조정하며, 응답 잘림·거절·빈 응답은 공통 오류로 처리함
+- 모델별 제약 근거: [사고 지원표](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting), [구조화 출력](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [SDK v1 변경 사항](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md)
+- 회귀 검증: `uv run --locked python -m unittest discover -s tests -v` 실행. 외부 API 과금 없이 SDK 전송 계층과 응답 경계를 검증함
 
 ### OpenRouter
 
@@ -241,6 +267,7 @@ src/srt_trans/
     base.py         # 프로바이더 추상 인터페이스
     gemini.py       # Gemini 구현
     openai_provider.py  # OpenAI 구현 (GPT-5 이상/이전 모델 파라미터 분기)
+    anthropic_provider.py  # Anthropic 구현 (Claude 사고 제어/구조화 출력/토큰 계산)
     openrouter.py   # OpenRouter 구현 (모델 메타데이터 기반 파라미터 판정)
   jobs.py           # 작업 상태 및 SSE 이벤트
   config.py         # 설정 저장/로드

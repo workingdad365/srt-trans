@@ -33,8 +33,8 @@ _BASE_INSTRUCTION = (
     "and the style of the dialogue is consistent.\n"
     "Try to paraphrase naturally, not rigidly, especially in Korean, and omit or replace definite "
     "articles such as he, she, they, etc. that do not need to be translated.\n"
-    "Concentrate on turning the whole sentence into a natural Korean sentence rather than "
-    "translating it word for word.\n"
+    "Translate each object's content independently, even when it is only a sentence fragment. "
+    "Use neighboring objects for context only; never move their words or meaning into this object.\n"
     "Korean dialogue requires consistent use of honorifics and semi-speech when speaking between "
     "characters.\n"
     "Try to infer relationships between characters as much as possible to ensure that the use of "
@@ -43,6 +43,8 @@ _BASE_INSTRUCTION = (
     "Do NOT move or merge 'content' between objects.\n"
     "Do NOT add or remove any objects.\n"
     "Do NOT alter the 'index' field.\n"
+    "Return exactly one translated object for every input object, in the same order. "
+    "Never renumber the remaining objects after merging or omitting an entry.\n"
 )
 
 # 서식 태그가 붙은 줄에서 종결 마침표가 남는 사례가 잦아 별도 규칙으로 강조함

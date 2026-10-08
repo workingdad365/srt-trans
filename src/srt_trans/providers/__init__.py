@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from .anthropic_provider import AnthropicProvider
 from .base import (
     AuthError,
     Chunk,
@@ -26,6 +27,7 @@ from .openrouter import OpenRouterProvider
 _PROVIDERS: dict[str, type[LLMProvider]] = {
     GeminiProvider.info.id: GeminiProvider,
     OpenAIProvider.info.id: OpenAIProvider,
+    AnthropicProvider.info.id: AnthropicProvider,
     OpenRouterProvider.info.id: OpenRouterProvider,
 }
 
@@ -58,6 +60,7 @@ def model_capabilities(provider_id: str, model: str) -> ModelCapabilities:
 
 
 __all__ = [
+    "AnthropicProvider",
     "AuthError",
     "Chunk",
     "ContentBlockedError",

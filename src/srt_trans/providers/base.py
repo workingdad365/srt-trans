@@ -47,6 +47,7 @@ class GenerationParams:
     프로바이더마다 사고(reasoning) 제어 방식이 다름.
     - Gemini: thinking + thinking_budget(토큰 수)
     - OpenAI: reasoning_effort(단계 값)
+    - Anthropic: 수동 사고는 thinking_budget, 적응형 사고는 reasoning_effort
     각 프로바이더는 자신이 쓰는 필드만 사용하고 나머지는 무시함.
     """
 
