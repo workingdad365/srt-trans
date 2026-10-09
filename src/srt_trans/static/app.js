@@ -18,6 +18,7 @@ const state = {
   config: null,
   file: null,
   jobId: null,
+  autoDownloadJobId: null,
   eventSource: null,
   running: false,
   // TMDB에서 가져온 줄거리/출연진 정보. 직접 입력한 줄거리가 없을 때만 사용됨
@@ -259,7 +260,7 @@ function bindEvents() {
   $("start").addEventListener("click", startTranslation);
   $("cancel").addEventListener("click", cancelTranslation);
   $("download").addEventListener("click", () => {
-    if (state.jobId) window.location.href = `/api/jobs/${state.jobId}/download`;
+    if (state.jobId) downloadResult(state.jobId);
   });
   $("clear-log").addEventListener("click", () => ($("console").innerHTML = ""));
 }
@@ -665,7 +666,7 @@ function setupDropzone() {
   );
   zone.addEventListener("drop", (event) => {
     const files = event.dataTransfer.files;
-    if (files && files.length) uploadFile(files[0]);
+    if (files && files.length) uploadFile(files[0], true);
   });
 
   // 페이지 전체에서 기본 드롭 동작을 막음
@@ -674,7 +675,7 @@ function setupDropzone() {
   );
 }
 
-async function uploadFile(file) {
+async function uploadFile(file, autoDownload = false) {
   if (!file.name.toLowerCase().endsWith(".srt")) {
     toast("SRT 파일만 사용할 수 있습니다.", "error");
     return;
@@ -683,7 +684,7 @@ async function uploadFile(file) {
   form.append("file", file);
   try {
     const info = await api("/api/upload", { method: "POST", body: form });
-    setFile(info);
+    setFile({ ...info, autoDownload });
     toast(`${info.name} 을(를) 불러왔습니다.`, "ok");
   } catch (error) {
     toast(error.message, "error");
@@ -956,11 +957,13 @@ async function startTranslation() {
   }
 
   const request = collectRequest();
+  const autoDownload = Boolean(state.file.autoDownload);
   await persistSettings(request);
 
   try {
     const result = await postJson("/api/translate", request);
     state.jobId = result.job_id;
+    state.autoDownloadJobId = autoDownload ? result.job_id : null;
     setRunning(true);
     $("download").classList.add("hidden");
     $("console").innerHTML = "";
@@ -990,6 +993,7 @@ function connectEvents(jobId) {
     const data = JSON.parse(event.data);
     updateProgress(data.done, data.total);
     for (const entry of data.logs || []) logLine(entry.level, entry.message, entry.time);
+    handleStatus(data);
   });
 
   source.addEventListener("log", (event) => {
@@ -1023,6 +1027,10 @@ function updateProgress(done, total) {
   $("progress-text").textContent = total > 0 ? `${done} / ${total} (${ratio.toFixed(1)}%)` : "대기 중";
 }
 
+function downloadResult(jobId) {
+  window.location.href = `/api/jobs/${jobId}/download`;
+}
+
 function handleStatus(data) {
   if (data.status === "running") {
     setRunning(true);
@@ -1035,7 +1043,13 @@ function handleStatus(data) {
         data.output_path ? `저장 완료: ${data.output_path}` : "번역이 완료되었습니다.",
         "ok"
       );
-      if (data.has_result) $("download").classList.remove("hidden");
+      if (data.has_result) {
+        $("download").classList.remove("hidden");
+        if (state.autoDownloadJobId === state.jobId && state.jobId) {
+          state.autoDownloadJobId = null;
+          downloadResult(state.jobId);
+        }
+      }
     } else if (data.status === "failed") {
       toast(`번역 실패: ${data.error || "알 수 없는 오류"}`, "error");
       // 중단 지점까지 번역된 부분이 있으면 받아 갈 수 있게 함
