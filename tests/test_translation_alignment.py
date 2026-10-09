@@ -8,7 +8,9 @@ from unittest.mock import Mock
 from srt import Subtitle
 
 from srt_trans.providers import Chunk, ContentBlockedError, LLMProvider, ModelCapabilities
-from srt_trans.translator import EngineOptions, TranslationEngine, TranslationFailed
+from srt_trans.translator import (
+    EngineOptions, TranslationCancelled, TranslationEngine, TranslationFailed, parse_subtitles,
+)
 
 
 def source(count):
@@ -22,6 +24,7 @@ def response(items):
 
 def make_engine(replies, batch_size):
     provider = Mock(spec=LLMProvider)
+    provider.model = "test-model"
     provider.output_format_instruction.return_value = ""
     provider.capabilities.return_value = ModelCapabilities()
     provider.generate.side_effect = replies
@@ -50,9 +53,45 @@ class TranslationAlignmentTests(unittest.TestCase):
         self.assertEqual([row["index"] for row in json.loads(requests[1].kwargs["user_text"])], ["0", "1"])
         self.assertEqual(requests[1].kwargs["history"], [])
         self.assertEqual(json.loads(requests[2].kwargs["history"][1].text), good[:2])
-        self.assertEqual([s.content for s in result.subtitles], [f"번역 {i}" for i in range(4)])
-        self.assertEqual([(s.index, s.start, s.end) for s in result.subtitles],
+        self.assertEqual([s.content for s in result.subtitles[:-1]], [f"번역 {i}" for i in range(4)])
+        self.assertEqual([(s.index, s.start, s.end) for s in result.subtitles[:-1]],
                          [(s.index, s.start, s.end) for s in originals])
+
+    def test_completed_output_appends_credit_after_latest_end(self):
+        engine, _ = make_engine([response([
+            {"index": str(i), "content": f"번역 {i}"} for i in range(2)
+        ])], 2)
+        originals = source(2)
+        originals[0].end = timedelta(seconds=10, milliseconds=250)
+        originals[1].index = 7
+        result = engine.translate(originals)
+        saved = parse_subtitles(result.compose())
+        self.assertEqual(len(saved), 3)
+        self.assertEqual(saved[-1].index, 8)
+        self.assertEqual(saved[-1].start, timedelta(seconds=15, milliseconds=250))
+        self.assertEqual(saved[-1].end, timedelta(seconds=16, milliseconds=250))
+        self.assertEqual(saved[-1].content, "Translated by AI (test-model)")
+        self.assertEqual((result.translated_count, result.total, engine.completed_count), (2, 2, 2))
+        self.assertEqual(len(originals), 2)
+        self.assertEqual(len(engine.partial_result().subtitles), 2)
+        self.assertEqual(len(parse_subtitles(result.compose())), 3)
+
+    def test_resumed_translation_appends_credit_once(self):
+        engine, _ = make_engine([response([{"index": "1", "content": "번역 1"}])], 1)
+        engine.options.start_index = 1
+        result = engine.translate(source(2))
+        self.assertEqual(len(result.subtitles), 3)
+        self.assertEqual(result.subtitles[-1].content, "Translated by AI (test-model)")
+        self.assertEqual((result.translated_count, result.total), (1, 2))
+
+    def test_cancelled_translation_does_not_append_credit(self):
+        engine, _ = make_engine([response([{"index": "0", "content": "번역 0"}])], 1)
+        engine._on_progress = lambda done, total: engine.cancel() if done == 1 and total == 2 else None
+        with self.assertRaises(TranslationCancelled):
+            engine.translate(source(2))
+        partial = engine.partial_result()
+        self.assertEqual(len(parse_subtitles(partial.compose())), 2)
+        self.assertNotIn("Translated by AI", partial.compose())
 
     def test_invalid_last_entry_cannot_modify_valid_prefix(self):
         malformed = [

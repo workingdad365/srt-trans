@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 import json_repair
@@ -200,8 +201,20 @@ class TranslationEngine:
                 "info",
                 f"모델이 남긴 종결 마침표 {self._period_fixes}건을 제거했습니다.",
             )
+        self._raise_if_cancelled()
+        output = list(translated)
+        if output:
+            credit_start = max(item.end for item in output) + timedelta(seconds=5)
+            output.append(
+                Subtitle(
+                    index=max(item.index or 0 for item in output) + 1,
+                    start=credit_start,
+                    end=credit_start + timedelta(seconds=1),
+                    content=f"Translated by AI ({self.provider.model})",
+                )
+            )
         self._log("success", "번역이 완료되었습니다.")
-        return TranslationResult(subtitles=translated, translated_count=total - start, total=total)
+        return TranslationResult(subtitles=output, translated_count=total - start, total=total)
 
     # --- 내부 구현 -------------------------------------------------------
 
