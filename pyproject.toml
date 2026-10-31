@@ -1,6 +1,6 @@
 [project]
 name = "srt-trans"
-version = "0.1.0"
+version = "1.0.0"
 description = "다중 LLM 프로바이더 기반 SRT 자막 한국어 번역기 (PySide6 데스크톱 앱)"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
