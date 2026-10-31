@@ -9,6 +9,7 @@ build/
 *.egg-info/
 
 # 도구 캐시
+.*/
 .uv/
 .pytest_cache/
 .ruff_cache/
@@ -34,4 +35,3 @@ desktop.ini
 # 실행 산출물
 *.log
 *.srt
-

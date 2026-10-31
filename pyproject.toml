@@ -1,14 +1,12 @@
 [project]
 name = "srt-trans"
 version = "0.1.0"
-description = "다중 LLM 프로바이더 기반 SRT 자막 한국어 번역기 (웹 UI)"
+description = "다중 LLM 프로바이더 기반 SRT 자막 한국어 번역기 (PySide6 데스크톱 앱)"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = { text = "MIT" }
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "python-multipart>=0.0.17",
+    "pyside6>=6.11.2",
     "pydantic>=2.9.0",
     "srt>=3.5.3",
     "json-repair>=0.30.0",
